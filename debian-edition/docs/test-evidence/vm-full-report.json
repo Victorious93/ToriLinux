@@ -1,0 +1,267 @@
+[
+ {
+  "check": "VM boot to a root debug shell (BIOS-less direct kernel boot, TCG)",
+  "ok": true,
+  "detail": "45s"
+ },
+ {
+  "check": "kernel + Debian release",
+  "ok": true,
+  "detail": "boot=live components noroot username=victor hostname=victorlinux locales=en_US.UTF-8 keyboard-layouts=us timezone=UTC nopersistence console=ttyS0 systemd.debug_shell=/dev/ttyS1 \r | 6.12.117+deb13-amd64\r | Debian GNU/Linux 13 (trixie)"
+ },
+ {
+  "check": "system reaches running state; failed units listed",
+  "ok": true,
+  "detail": "running"
+ },
+ {
+  "check": "owner locked, no shared password, no NOPASSWD:ALL",
+  "ok": true,
+  "detail": "victor L 2026-11-14 0 99999 7 -1\r\nno-live-sudoers\r\nno-nopasswd-all"
+ },
+ {
+  "check": "SSH disabled and nothing listening for connections at boot",
+  "ok": true,
+  "detail": "disabled\r\ninactive"
+ },
+ {
+  "check": "no AI service started at boot",
+  "ok": true,
+  "detail": "none\r\nno-llama-running"
+ },
+ {
+  "check": "storage auto-mounted VICTORDATA by UUID (single partition)",
+  "ok": true,
+  "detail": "{\r\n  \"device\": \"/dev/vda\",\r\n  \"message\": \"ok\",\r\n  \"model\": \"\",\r\n  \"serial\": \"\",\r\n  \"size\": 2147483648,\r\n  \"state\": \"mounted-rw\",\r\n  \"uuid\": \"468c4a62-3cea-4a0b-9278-00623fedb873\"\r\n}\r\ndata  root  selected.uuid  storage.json"
+ },
+ {
+  "check": "desktop (Xorg+Xfce) up, Control Center autostarted",
+  "ok": true,
+  "detail": "939 /usr/lib/xorg/Xorg :0 -seat seat0 -auth /var/run/lightdm/root/:0 -nolisten tcp vt7 -novtswitch\r\n1030 xfce4-session\r\n1188 python3 /usr/local/bin/victor-control\r\n1189 python3 /usr/local/bin/victor-firstrun"
+ },
+ {
+  "check": "DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed",
+  "ok": true,
+  "detail": "dark\r\nAdwaita-dark\r\nColorBackground=#1b1e26\r\ntheme-name=Adwaita-dark\r\nicon-theme-name=Adwaita\r\ngtk-theme-installed"
+ },
+ {
+  "check": "light theme selectable; choice stored on the data partition",
+  "ok": true,
+  "detail": "light\r\n{\"theme\": \"light\"}"
+ },
+ {
+  "check": "first-run needed (owner-status=locked)",
+  "ok": true,
+  "detail": "locked\r\n"
+ },
+ {
+  "check": "first-run sets the OWNER's password",
+  "ok": true,
+  "detail": "owner password set"
+ },
+ {
+  "check": "password change without the current password is refused",
+  "ok": true,
+  "detail": "current password is wrong"
+ },
+ {
+  "check": "password hash persisted on data partition (0600)",
+  "ok": true,
+  "detail": "victor P 2026-11-14 0 99999 7 -1\r\n600"
+ },
+ {
+  "check": "imported model visible",
+  "ok": true,
+  "detail": "[\r\n  {\r\n    \"name\": \"test-model.gguf\",\r\n    \"size\": 1185376\r\n  }\r\n]"
+ },
+ {
+  "check": "select model",
+  "ok": true,
+  "detail": "selected test-model.gguf"
+ },
+ {
+  "check": "save inference settings",
+  "ok": true,
+  "detail": " \"bind\": \"127.0.0.1\",\r\n  \"parallel\": 1,\r\n  \"sleep_idle_minutes\": 15,\r\n  \"jinja\": true,\r\n  \"threads\": 0,\r\n  \"remote\": {\r\n    \"enabled\": false,\r\n    \"tls\": true,\r\n    \"vpn_plain_http_ack\": false\r\n  }\r\n}"
+ },
+ {
+  "check": "service start (CPU fallback explained)",
+  "ok": true,
+  "detail": "  },\r\n  \"warnings\": [],\r\n  \"argv_redacted\": [\r\n    \"/opt/victorlinux/llama.cpp/bin/llama-server\",\r\n    \"-m\",\r\n    \"/run/victor/data/models/test-model.gguf\",\r\n    \"-c\",\r\n    \"2048\",\r\n    \"--host\",\r\n    \"127.0.0.1\",\r\n    \"--port\",\r\n    \"8080\",\r\n    \"-np\",\r\n    \"1\",\r\n    \"--no-warmup\",\r\n    \"--device\",\r\n    \"none\",\r\n    \"-ngl\",\r\n    \"0\",\r\n    \"--sleep-idle-seconds\",\r\n    \"900\",\r\n    \"--jinja\"\r\n  ]\r\n}"
+ },
+ {
+  "check": "second concurrent start refused (single model loaded)",
+  "ok": true,
+  "detail": "ERROR: The inference service is already running (only one model is loaded at a time). Stop it first."
+ },
+ {
+  "check": "loopback API self-test (health/models/chat/stream)",
+  "ok": true,
+  "detail": ": 0}}\",\r\n      \"seconds\": 1.17\r\n    },\r\n    {\r\n      \"check\": \"streaming SSE\",\r\n      \"ok\": true,\r\n      \"detail\": \"10 SSE chunks, [DONE]=True\",\r\n      \"seconds\": 0.63\r\n    },\r\n    {\r\n      \"check\": \"tool calling\",\r\n      \"ok\": false,\r\n      \"detail\": \"model returned no tool call\",\r\n      \"seconds\": 5.62\r\n    }\r\n  ],\r\n  \"capabilities\": {\r\n    \"models_endpoint\": \"verified\",\r\n    \"chat_completions\": \"verified\",\r\n    \"streaming\": \"verified\",\r\n    \"tool_calling\": \"failed\"\r\n  },\r\n  \"all_ok\": false\r\n}"
+ },
+ {
+  "check": "tool calling NOT advertised for the tiny test model",
+  "ok": true,
+  "detail": ""
+ },
+ {
+  "check": "service stop",
+  "ok": true,
+  "detail": "{\r\n  \"stopped\": true\r\n}"
+ },
+ {
+  "check": "guest has a non-loopback address for remote-mode test",
+  "ok": true,
+  "detail": "10.0.2.15"
+ },
+ {
+  "check": "enable remote mode (explicit address)",
+  "ok": true,
+  "detail": "  \"bind\": \"10.0.2.15\",\r\n  \"parallel\": 1,\r\n  \"sleep_idle_minutes\": 15,\r\n  \"jinja\": true,\r\n  \"threads\": 0,\r\n  \"remote\": {\r\n    \"enabled\": true,\r\n    \"tls\": true,\r\n    \"vpn_plain_http_ack\": false\r\n  }\r\n}"
+ },
+ {
+  "check": "remote service starts with TLS+key",
+  "ok": true,
+  "detail": "    \"none\",\r\n    \"-ngl\",\r\n    \"0\",\r\n    \"--sleep-idle-seconds\",\r\n    \"900\",\r\n    \"--jinja\",\r\n    \"--api-key-file\",\r\n    \"/run/victor/data/secrets/api.key\",\r\n    \"--ssl-cert-file\",\r\n    \"/run/victor/data/secrets/tls/cert.pem\",\r\n    \"--ssl-key-file\",\r\n    \"/run/victor/data/secrets/tls/key.pem\"\r\n  ]\r\n}"
+ },
+ {
+  "check": "firewall: API port reachable from outside while remote mode is enabled",
+  "ok": true,
+  "detail": "connected"
+ },
+ {
+  "check": "firewall set present (default drop)",
+  "ok": true,
+  "detail": "table inet victor {\r\n\tset allowed_tcp {\r\n\t\ttype inet_service\r\n\t\telements = { 18443 }\r\n\t}\r\n}"
+ },
+ {
+  "check": "connection details reported",
+  "ok": true,
+  "detail": "{\r\n  \"base_url\": \"https://10.0.2.15:18443/v1\",\r\n  \"health_url\": \"https://10.0.2.15:18443/health\",\r\n  \"auth\": \"Bearer API key\",\r\n  \"tls\": true,\r\n  \"tls_cert_sha256\": \"93:C6:1E:9E:8B:E1:BC:67:E0:1A:05:D0:BF:BA:40:94:30:FB:2E:66:45:BB:31:20:60:94:D9:55:78:DF:11:4E\",\r\n  \"scope\": \"LAN/VPN\",\r\n  \"droidcomm"
+ },
+ {
+  "check": "remote API self-test: 401 without key, streaming over TLS with pinned cert",
+  "ok": true,
+  "detail": "(s): /run/victor/data/models/test-model.gguf\",\r\n      \"seconds\": 0.06\r\n    },\r\n    {\r\n      \"check\": \"chat completion\",\r\n      \"ok\": true,\r\n      \"detail\": \"usage={'completion_tokens': 8, 'prompt_tokens': 45, 'total_tokens': 53, 'prompt_tokens_details': {'cached_tokens': 0}}\",\r\n      \"seconds\": 0.91\r\n    },\r\n    {\r\n      \"check\": \"streaming SSE\",\r\n      \"ok\": true,\r\n      \"detail\": \"10 SSE chunks, [DONE]=True\",\r\n      \"seconds\": 0.38\r\n    }\r\n  ],\r\n  \"capabilities\": {\r\n    \"models_endpoint\": \"verified\",\r\n    \"chat_completions\": \"verified\",\r\n    \"streaming\": \"verified\"\r\n  },\r\n  \"all_ok\": true\r\n}"
+ },
+ {
+  "check": "revoke closes the firewall while the server is STILL listening (probe from outside)",
+  "ok": true,
+  "detail": "closed:TimeoutError | remote access revoked: SSH disabled, keys removed, firewall closed. Run 'victor-ctl api rotate-key' to invalidate API clients.\r\ntable inet victor {\tset allowed_tcp {\t\ttype inet_service\t}}"
+ },
+ {
+  "check": "Kali start refuses without installed pack (no silent pull)",
+  "ok": true,
+  "detail": "ERROR: Kali image is not installed. Use 'kali load-pack' (offline) or 'kali download --yes'. Nothing is pulled automatically."
+ },
+ {
+  "check": "no Kali repositories on host",
+  "ok": true,
+  "detail": "no-kali-repo"
+ },
+ {
+  "check": "rootless podman available",
+  "ok": true,
+  "detail": "true"
+ },
+ {
+  "check": "dev/diag tools run as ordinary user",
+  "ok": true,
+  "detail": "uid=1000(victor) gid=1000(victor) groups=1000(victor),20(dialout),24(cdrom),27(sudo),29(audio),44(video),46(plugdev),100(users),101(netdev),105(wireshark),990(victor-admin),992(render)\r\nAndroid Debug Bridge version 1.0.41\r\nfastboot version 34.0.5-debian\r\nNmap version 7.95 ( https://nmap.org )\r\ntcpdump version 4.99.5\r\ngit version 2.47.3"
+ },
+ {
+  "check": "wireshark capture permitted without root (dumpcap via group)",
+  "ok": true,
+  "detail": "1. enp0s2\r\n2. any\r\n3. lo (Loopback)"
+ },
+ {
+  "check": "hardware diagnostics run",
+  "ok": true,
+  "detail": "{\r\n  \"ram\": {\r\n    \"total\": 4109705216,\r\n    \"available\": 3558330368,\r\n    \"swap_total\": 0\r\n  },\r\n  \"pci_gpus\": [\r\n    {\r\n      \"desc\": \"Device [1234:1111] (rev 02)\",\r\n      \"vendor\": \"1234\",\r\n      \"pci_id\": \"1234:1111\",\r\n      \"driver\": \"bochs-drm\"\r\n    }\r\n  ],\r\n  \"sysfs_vram\": [],\r\n  \"nvidia_smi\""
+ },
+ {
+  "check": "backend selection explains CPU fallback in VM",
+  "ok": true,
+  "detail": "{\r\n  \"backend\": \"cpu\",\r\n  \"device\": null,\r\n  \"accelerated\": false,\r\n  \"reason\": \"llama.cpp found no GPU device (missing /dev/dri access, driver/firmware not loaded, or no supported GPU; run Control Center > Diagnostics); falling back to CPU inference\",\r\n  \"visible_warning\": true\r\n}"
+ },
+ {
+  "check": "PERSIST: owner credentials restored from data partition after reboot",
+  "ok": true,
+  "detail": "victor P 2026-11-14 0 99999 7 -1"
+ },
+ {
+  "check": "PERSIST: inference config survived reboot",
+  "ok": true,
+  "detail": "{\r\n  \"model\": \"test-model.gguf\",\r\n  \"backend\": \"auto\",\r\n  \"ctx\": 2048,\r\n  \"mem_limit_gb\": 0.0,\r\n  \"port\": 18443,\r\n  \"bind\": \"10.0.2.15\",\r\n  \"parallel\": 1,\r\n  \"sleep_idle_minutes\": 15,\r\n  \"jinja\": true"
+ },
+ {
+  "check": "PERSIST: model survived reboot",
+  "ok": true,
+  "detail": "[\r\n  {\r\n    \"name\": \"test-model.gguf\",\r\n    \"size\": 1185376\r\n  }\r\n]"
+ },
+ {
+  "check": "PERSIST: API key + TLS cert + bounded log snapshot + capability record present",
+  "ok": true,
+  "detail": "/run/victor/data/logs:\r\nllama-20261114T152504.log\r\n\r\n/run/victor/data/secrets/:\r\napi.key\r\nowner.shadow\r\ntls\r\ncaps-saved"
+ },
+ {
+  "check": "PERSIST: theme choice (light) restored from the data partition after reboot",
+  "ok": true,
+  "detail": "light\r\nlight"
+ },
+ {
+  "check": "switch back to dark",
+  "ok": true,
+  "detail": "dark"
+ },
+ {
+  "check": "first-run NOT repeated after reboot",
+  "ok": true,
+  "detail": "set\r\n"
+ },
+ {
+  "check": "service starts again from persisted settings, offline",
+  "ok": true,
+  "detail": "api-key-file\",\r\n    \"/run/victor/data/secrets/api.key\",\r\n    \"--ssl-cert-file\",\r\n    \"/run/victor/data/secrets/tls/cert.pem\",\r\n    \"--ssl-key-file\",\r\n    \"/run/victor/data/secrets/tls/key.pem\"\r\n  ]\r\n}"
+ },
+ {
+  "check": "inference works again offline after reboot",
+  "ok": true,
+  "detail": "\r\n    },\r\n    {\r\n      \"check\": \"streaming SSE\",\r\n      \"ok\": true,\r\n      \"detail\": \"10 SSE chunks, [DONE]=True\",\r\n      \"seconds\": 0.57\r\n    }\r\n  ],\r\n  \"capabilities\": {\r\n    \"models_endpoint\": \"verified\",\r\n    \"chat_completions\": \"verified\",\r\n    \"streaming\": \"verified\"\r\n  },\r\n  \"all_ok\": true\r\n}"
+ },
+ {
+  "check": "OFFLINE: no external connectivity during boot2 (QEMU restrict=on)",
+  "ok": true,
+  "detail": "ping: connect: Network is unreachable\r\nno-dns"
+ },
+ {
+  "check": "OFFLINE: no established external connections (no telemetry)",
+  "ok": true,
+  "detail": "no-external-connections"
+ },
+ {
+  "check": "MISSING storage: reported with actionable message",
+  "ok": true,
+  "detail": "{\r\n  \"candidates\": [],\r\n  \"message\": \"No VICTORDATA/TORIDATA partition found. Plug in the prepared VictorLinux USB, or start a temporary session (nothing is saved).\",\r\n  \"state\": \"missing\"\r\n}"
+ },
+ {
+  "check": "explicit temporary-session mode (RAM) with warning",
+  "ok": true,
+  "detail": "session\r\n{\r\n  \"message\": \"TEMPORARY SESSION: everything is kept in RAM and is lost at shutdown/reboot.\",\r\n  \"state\": \"session\"\r\n}\r\n"
+ },
+ {
+  "check": "start without model gives an actionable error",
+  "ok": true,
+  "detail": "ERROR: No model selected. Import a GGUF model, then select it in Models."
+ },
+ {
+  "check": "no persistent drive: owner stays locked (first-run runs again), never a default password",
+  "ok": true,
+  "detail": "victor L 2026-11-14 0 99999 7 -1"
+ },
+ {
+  "check": "READ-ONLY media handled: mounted ro, clear message",
+  "ok": true,
+  "detail": "\"state\": \"mounted-ro\"\r\nread-only\r\nro"
+ }
+]

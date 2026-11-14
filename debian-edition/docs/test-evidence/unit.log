@@ -1,0 +1,8 @@
+..../home/user/ToriLinux/debian-edition/tests/test_layout.py:44: ResourceWarning: unclosed file <_io.TextIOWrapper name='/home/user/ToriLinux/debian-edition/tests/../scripts/provision-usb.py' mode='r' encoding='utf-8'>
+  src = open(os.path.join(os.path.dirname(__file__), "..", "scripts", "provision-usb.py")).read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.........................
+----------------------------------------------------------------------
+Ran 29 tests in 0.004s
+
+OK

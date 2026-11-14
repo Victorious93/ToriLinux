@@ -1,0 +1,15 @@
+PASS: storage-auto finds the single VICTORDATA partition by UUID and mounts it
+PASS: layout directories exist and secrets is 0700
+PASS: import of a valid GGUF succeeds
+PASS: import rejects a non-GGUF with an actionable error
+PASS: import rejects a wrong checksum and imports nothing
+PASS: two VICTORDATA partitions attached -> refuses to guess (needs-selection)
+PASS: explicit selection by UUID mounts exactly that partition
+PASS: mount of an arbitrary non-matching UUID is refused
+PASS: server: TLS, key enforced (401 without), models, chat, streaming (real requests)
+PASS: tool calling is NOT advertised for a model that cannot do it
+PASS: API key file is 0600 and not in logs
+PASS: read-only storage is detected and explained
+PASS: free-space guard: import refused when below reserve
+PASS: storage reported as full
+RESULT: pass=14 fail=0
