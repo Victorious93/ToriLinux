@@ -95,6 +95,21 @@ class Config(unittest.TestCase):
         self.assertEqual(argv[argv.index("--device") + 1], "Vulkan0"); self.assertNotIn("--api-key-file", argv)
 
 
+class ApplySet(unittest.TestCase):
+    def test_types_and_dotted_keys(self):
+        import json
+        c = json.loads(json.dumps(llama.DEFAULTS))
+        llama.apply_set(c, ["ctx=2048", "jinja=1", "remote.enabled=true", "mem_limit_gb=2.5", "model=a.gguf", "remote.tls=0"])
+        self.assertEqual((c["ctx"], c["jinja"], c["remote"]["enabled"], c["mem_limit_gb"], c["model"], c["remote"]["tls"]),
+                         (2048, True, True, 2.5, "a.gguf", False))
+
+    def test_unknown_and_malformed(self):
+        import json
+        c = json.loads(json.dumps(llama.DEFAULTS))
+        for bad in (["nope=1"], ["remote.nope=1"], ["ctx"], ["ctx=abc"], ["model.x=1"]):
+            with self.assertRaises(VictorError): llama.apply_set(json.loads(json.dumps(c)), bad)
+
+
 class ModelFiles(unittest.TestCase):
     def write(self, data):
         f = tempfile.NamedTemporaryFile(delete=False, suffix=".gguf"); f.write(data); f.close(); self.addCleanup(os.unlink, f.name); return f.name

@@ -4,7 +4,7 @@ from .common import *
 from . import hw, models
 
 UNIT = "victor-llama"
-DEFAULTS = {"model": "", "backend": "auto", "ctx": 4096, "mem_limit_gb": 0, "port": 8080, "bind": "127.0.0.1",
+DEFAULTS = {"model": "", "backend": "auto", "ctx": 4096, "mem_limit_gb": 0.0, "port": 8080, "bind": "127.0.0.1",
             "parallel": 1, "sleep_idle_minutes": 15, "jinja": False, "threads": 0,
             "remote": {"enabled": False, "tls": True, "vpn_plain_http_ack": False}}
 FORBIDDEN_FLAGS = ("--tools", "--webui-mcp-proxy", "--ui-mcp-proxy", "--mcp-servers", "--models-dir")
@@ -51,6 +51,28 @@ def validate(c):
     if r["enabled"] and ip is not None and ip.is_loopback:
         errs.append("remote access is enabled but bind is loopback; choose the LAN/VPN address to listen on")
     return errs
+
+
+def apply_set(c, assignments):
+    """Apply KEY=VALUE / dotted.KEY=VALUE strings to a config dict (types follow the existing value). Unknown keys are errors."""
+    for kv in assignments:
+        if "=" not in kv:
+            raise VictorError(f"bad setting '{kv}' (expected KEY=VALUE)")
+        k, v = kv.split("=", 1)
+        path = k.split(".")
+        t = c
+        for part in path[:-1]:
+            if not isinstance(t.get(part), dict):
+                raise VictorError(f"unknown setting '{k}'")
+            t = t[part]
+        if path[-1] not in t:
+            raise VictorError(f"unknown setting '{k}'")
+        prev = t[path[-1]]
+        try:
+            t[path[-1]] = (v.lower() in ("1", "true", "yes", "on")) if isinstance(prev, bool) else type(prev)(v)
+        except ValueError:
+            raise VictorError(f"setting '{k}' expects {type(prev).__name__}, got '{v}'")
+    return c
 
 
 def save_config(c):

@@ -1,0 +1,27 @@
+#!/bin/bash
+# victor-theme dark|light|toggle|status : switches the desktop (Xfce/GTK), terminal, chat browser and Control Center together.
+set -Eeuo pipefail
+f="$HOME/.config/victorlinux/theme"; mkdir -p "$(dirname "$f")"
+cur=$(cat "$f" 2>/dev/null || echo dark)
+case "${1:-status}" in
+  status) echo "$cur"; exit 0;;
+  apply)  # at login: restore the per-drive choice from the data partition, else keep the default (dark)
+    saved=$(python3 -c "import json;print(json.load(open('/run/victor/root/settings/ui.json')).get('theme',''))" 2>/dev/null || true)
+    case "$saved" in dark|light) new="$saved";; *) new="$cur";; esac;;
+  toggle) new=$([ "$cur" = dark ] && echo light || echo dark);;
+  dark|light) new="$1";;
+  *) echo "usage: victor-theme dark|light|toggle|status|apply" >&2; exit 2;;
+esac
+echo "$new" > "$f"
+gtk=$([ "$new" = dark ] && echo Adwaita-dark || echo Adwaita)
+if command -v xfconf-query >/dev/null && [ -n "${DISPLAY:-}" ]; then
+  xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s "$gtk" 2>/dev/null || xfconf-query -c xsettings -p /Net/ThemeName -s "$gtk" 2>/dev/null || true
+fi
+tr="$HOME/.config/xfce4/terminal/terminalrc"
+if [ -f "$tr" ]; then
+  if [ "$new" = dark ]; then sed -i 's/^ColorForeground=.*/ColorForeground=#d8dee9/;s/^ColorBackground=.*/ColorBackground=#1b1e26/' "$tr"
+  else sed -i 's/^ColorForeground=.*/ColorForeground=#2e3440/;s/^ColorBackground=.*/ColorBackground=#f5f6f8/' "$tr"; fi
+fi
+# persist the choice per drive (best effort; the data partition may be absent)
+[ -d /run/victor/root/settings ] && echo "{\"theme\": \"$new\"}" > /run/victor/root/settings/ui.json 2>/dev/null || true
+echo "$new"

@@ -82,7 +82,6 @@ class VM:
             m = re.search(rf"__END_{tag}_(\d+)__", buf)
             if m:   # the echoed command contains a literal "$?", so only the real output matches \d+
                 out = buf.split(f"__END_{tag}_")[0]
-                out = "\n".join(l for l in out.splitlines()[1:])
                 return int(m.group(1)), out.strip()
         return 124, buf[-500:]
 
@@ -152,6 +151,10 @@ def full(iso, model, out):
         rc, o = vm.sh("for i in $(seq 90); do pgrep -f victor-control >/dev/null && break; sleep 2; done; pgrep -a Xorg | head -1; pgrep -a xfce4-session | head -1; pgrep -af victor-control | head -1; pgrep -af victor-firstrun | head -1", 240)
         rec("desktop (Xorg+Xfce) up, Control Center autostarted", "Xorg" in o and "xfce4-session" in o and "victor-control" in o, o)
         vm.screenshot(f"{out}/desktop-boot1.png")
+        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme status; grep -o 'Adwaita-dark' /home/victor/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml | head -1; grep -o 'ColorBackground=.*' /home/victor/.config/xfce4/terminal/terminalrc; grep theme-name /etc/lightdm/lightdm-gtk-greeter.conf; test -d /usr/share/themes/Adwaita-dark && echo gtk-theme-installed")
+        rec("DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed", o.startswith("dark") and "gtk-theme-installed" in o and "1b1e26" in o and "Adwaita-dark" in o, o)
+        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme light; cat /run/victor/data/settings/ui.json")
+        rec("light theme selectable; choice stored on the data partition", "light" in o and '"theme": "light"' in o, o)
         # ---- first run: owner password (offline)
         rc, o = vm.sh("runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv owner-status"); rec("first-run needed (owner-status=locked)", o.strip().endswith("locked"), o)
         rc, o = vm.sh("printf 'correct horse 42\\n' | runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv set-password"); rec("first-run sets the OWNER's password", rc == 0, o)
@@ -195,7 +198,7 @@ def full(iso, model, out):
         rc, o = ctl(vm, "kali start"); rec("Kali start refuses without installed pack (no silent pull)", rc != 0 and "not installed" in o, o)
         rc, o = vm.sh("grep -ril kali /etc/apt/ 2>/dev/null || echo no-kali-repo"); rec("no Kali repositories on host", "no-kali-repo" in o, o)
         rc, o = vm.sh("runuser -u victor -- podman info --format '{{.Host.Security.Rootless}}' 2>&1 | tail -1"); rec("rootless podman available", "true" in o, o)
-        rc, o = vm.sh("runuser -u victor -- id; runuser -u victor -- adb version | head -1; fastboot --version | head -1; nmap --version | head -1; tcpdump --version 2>&1 | head -1; git --version"); rec("dev/diag tools run as ordinary user", "adb" in o.lower() and "Nmap" in o and "tcpdump" in o, o)
+        rc, o = vm.sh("runuser -u victor -- id; runuser -u victor -- adb version | head -1; fastboot --version | head -1; nmap --version | head -1; tcpdump --version 2>&1 | head -1; git --version"); rec("dev/diag tools run as ordinary user", "Android Debug Bridge" in o and "fastboot version" in o and "Nmap" in o and "tcpdump version" in o and "git version" in o, o)
         rc, o = vm.sh("runuser -u victor -- dumpcap -D 2>&1 | head -3"); rec("wireshark capture permitted without root (dumpcap via group)", "1." in o or "lo" in o, o)
         rc, o = vm.sh("runuser -u victor -- victor-ctl diag show >/dev/null 2>&1; runuser -u victor -- /usr/local/bin/victor-ctl hw snapshot | head -c 600"); rec("hardware diagnostics run", "pci_gpus" in o, o[:300])
         rc, o = ctl(vm, "hw backend"); rec("backend selection explains CPU fallback in VM", "cpu" in o.lower(), o[:300])
@@ -211,6 +214,8 @@ def full(iso, model, out):
         rc, o = ctl(vm, "llama config"); rec("PERSIST: inference config survived reboot", '"model": "test-model.gguf"' in o and '"ctx": 2048' in o, o[:200])
         rc, o = ctl(vm, "model list"); rec("PERSIST: model survived reboot", "test-model.gguf" in o, o)
         rc, o = vm.sh("ls /run/victor/data/secrets/ /run/victor/data/logs | head; test -f /run/victor/data/settings/capabilities.json && echo caps-saved"); rec("PERSIST: API key + TLS cert + bounded log snapshot + capability record present", "api.key" in o and "tls" in o and "caps-saved" in o, o)
+        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme apply; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("PERSIST: theme choice (light) restored from the data partition after reboot", o.strip().endswith("light"), o)
+        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme dark >/dev/null; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("switch back to dark", o.strip().endswith("dark"), o)
         rc, o = vm.sh("runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv owner-status"); rec("first-run NOT repeated after reboot", o.strip().endswith("set"), o)
         rc, o = ctl(vm, "llama start", 120); rec("service starts again from persisted settings, offline", rc == 0, o[-200:])
         time.sleep(15); rc, o = ctl(vm, "api selftest", 200); rec("inference works again offline after reboot", '"chat_completions": "verified"' in o, o[-300:])
@@ -232,7 +237,7 @@ def full(iso, model, out):
     vm = VM(iso, w, "boot4", disks=[(disk, True)], net_restrict=True, kernel=kern)
     try:
         vm.connect(); vm.sh("systemctl is-system-running --wait >/dev/null 2>&1", 240)
-        rc, o = vm.sh("cat /run/victor/storage.json | head -5; grep -c ' ro,' /proc/mounts"); rec("READ-ONLY media handled: mounted ro, clear message", "mounted-ro" in o, o[:300])
+        rc, o = vm.sh("grep -o '\"state\": \"[a-z-]*\"' /run/victor/storage.json; grep -o 'read-only' /run/victor/storage.json | head -1; grep ' /run/victor/data ' /proc/mounts | cut -d' ' -f4 | cut -d, -f1"); rec("READ-ONLY media handled: mounted ro, clear message", '"state": "mounted-ro"' in o and "read-only" in o and o.strip().endswith("ro"), o)
     finally:
         vm.poweroff()
     json.dump(RESULTS, open(f"{out}/vm-test-report.json", "w"), indent=1)

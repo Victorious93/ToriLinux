@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=VictorLinux theme
+Exec=/usr/local/bin/victor-theme apply
+X-GNOME-Autostart-enabled=true

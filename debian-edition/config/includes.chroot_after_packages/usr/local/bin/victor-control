@@ -16,9 +16,49 @@ def ctl(*args, timeout=600):
         return p.stdout.strip()
 
 
+PALETTES = {
+    "dark": {"bg": "#1b1e26", "panel": "#252a35", "fg": "#d8dee9", "accent": "#5e81ac", "entry": "#2e3440", "sel": "#434c5e"},
+    "light": {"bg": "#f5f6f8", "panel": "#e6e8ec", "fg": "#2e3440", "accent": "#5e81ac", "entry": "#ffffff", "sel": "#cfd6e4"},
+}
+
+
+def current_theme():
+    try:
+        return subprocess.run(["/usr/local/bin/victor-theme", "status"], capture_output=True, text=True, timeout=5).stdout.strip() or "dark"
+    except Exception:
+        return "dark"
+
+
 class App(tk.Tk):
+    def apply_theme(self, mode):
+        P = PALETTES[mode]; self.mode = mode
+        st = ttk.Style(self); st.theme_use("clam")
+        st.configure(".", background=P["bg"], foreground=P["fg"], fieldbackground=P["entry"], bordercolor=P["panel"], lightcolor=P["panel"], darkcolor=P["panel"])
+        st.configure("TFrame", background=P["bg"]); st.configure("TLabel", background=P["bg"], foreground=P["fg"])
+        st.configure("TLabelframe", background=P["bg"], foreground=P["fg"]); st.configure("TLabelframe.Label", background=P["bg"], foreground=P["fg"])
+        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=5); st.map("TButton", background=[("active", P["sel"])])
+        st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"]); st.map("TCheckbutton", background=[("active", P["bg"])])
+        st.configure("TEntry", fieldbackground=P["entry"], foreground=P["fg"], insertcolor=P["fg"])
+        st.configure("TNotebook", background=P["bg"]); st.configure("TNotebook.Tab", background=P["panel"], foreground=P["fg"], padding=(10, 4))
+        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", "#ffffff")])
+        self.configure(bg=P["bg"])
+        self.option_add("*Listbox.background", P["entry"]); self.option_add("*Listbox.foreground", P["fg"])
+        self.option_add("*Listbox.selectBackground", P["accent"]); self.option_add("*Text.background", P["entry"]); self.option_add("*Text.foreground", P["fg"])
+        for w in getattr(self, "_themed", []):
+            try:
+                w.configure(bg=P["entry"], fg=P["fg"], insertbackground=P["fg"])
+                if isinstance(w, tk.Listbox): w.configure(selectbackground=P["accent"])
+            except tk.TclError:
+                pass
+
+    def toggle_theme(self):
+        new = "light" if self.mode == "dark" else "dark"
+        self.bg(lambda: subprocess.run(["/usr/local/bin/victor-theme", new], capture_output=True, text=True).stdout, lambda r: self.apply_theme(new))
+
     def __init__(self):
         super().__init__()
+        self._themed = []
+        self.apply_theme(current_theme() if current_theme() in PALETTES else "dark")
         self.title("VictorLinux Control Center")
         self.geometry("860x600")
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=6, pady=6)
@@ -51,6 +91,7 @@ class App(tk.Tk):
 
     def mkout(self, parent):
         t = scrolledtext.ScrolledText(parent, height=12, state="disabled", font="TkFixedFont"); t.pack(fill="both", expand=True, pady=4)
+        self._themed.append(t); self.apply_theme(self.mode)
         return t
 
     # ---- Status
@@ -105,7 +146,7 @@ class App(tk.Tk):
     # ---- Models
     def tab_models(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Models")
-        self.model_list = tk.Listbox(f, height=7); self.model_list.pack(fill="x")
+        self.model_list = tk.Listbox(f, height=7); self.model_list.pack(fill="x"); self._themed.append(self.model_list)
         row = ttk.Frame(f); row.pack(fill="x", pady=4)
         ttk.Button(row, text="Import .gguf...", command=self.import_model).pack(side="left", padx=3)
         ttk.Button(row, text="Select for inference", command=self.select_model).pack(side="left", padx=3)
@@ -229,7 +270,7 @@ class App(tk.Tk):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Storage")
         ttk.Label(f, wraplength=800, text="Persistent app data (models, chats, settings, images, Kali work, documents, bounded logs) lives on a VICTORDATA partition. "
                   "The OS itself is NOT persistent. Pick one partition explicitly if several are attached.").pack(anchor="w")
-        self.cand = tk.Listbox(f, height=6); self.cand.pack(fill="x", pady=4)
+        self.cand = tk.Listbox(f, height=6); self.cand.pack(fill="x", pady=4); self._themed.append(self.cand)
         b = ttk.Frame(f); b.pack(fill="x")
         for t, fn in (("Rescan", self.scan), ("Use selected partition", self.use_sel), ("Temporary session (RAM only)", self.session)):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
@@ -256,7 +297,7 @@ class App(tk.Tk):
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")
-        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Dark / light theme", self.toggle_theme), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
         self.diag_out = self.mkout(f)
 

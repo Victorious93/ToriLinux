@@ -85,12 +85,7 @@ def main():
             elif a.cmd == "status": out(a, llama.status())
             else:
                 c = llama.load_config(); old = json.loads(json.dumps(c))
-                for kv in a.set:
-                    k, v = kv.split("=", 1); path = k.split(".")
-                    t = c
-                    for p_ in path[:-1]: t = t[p_]
-                    old = t[path[-1]]
-                    t[path[-1]] = (v.lower() in ("1", "true", "yes", "on")) if isinstance(old, bool) else type(old)(v)
+                llama.apply_set(c, a.set)
                 if a.set:
                     llama.save_config(c)          # validates (bind/TLS/remote policy) before anything privileged happens
                     was, now = old["remote"]["enabled"], c["remote"]["enabled"]
