@@ -1,0 +1,5 @@
+# Only used with PROFILE=nvidia (build.sh copies this to *.list.chroot).
+nvidia-driver
+firmware-nvidia-graphics
+nvidia-persistenced
+nvidia-vulkan-icd

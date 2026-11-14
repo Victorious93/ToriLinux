@@ -1,0 +1,9 @@
+# Container engine for the OPTIONAL isolated Kali environment (no Kali repos on the host).
+podman
+uidmap
+slirp4netns
+passt
+netavark
+aardvark-dns
+crun
+fuse-overlayfs

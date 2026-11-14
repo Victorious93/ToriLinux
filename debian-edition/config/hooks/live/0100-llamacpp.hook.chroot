@@ -1,0 +1,35 @@
+#!/bin/bash
+# Build llama.cpp (pinned commit) with Vulkan + CPU backends inside the image chroot (BUILD-time network only).
+set -Eeuo pipefail
+. /usr/share/victorlinux/versions.env
+export DEBIAN_FRONTEND=noninteractive
+BUILD_DEPS="build-essential cmake ninja-build git ca-certificates pkg-config libvulkan-dev glslc spirv-headers libssl-dev libshaderc-dev"
+apt-get update
+apt-get install -y --no-install-recommends $BUILD_DEPS
+src=/tmp/llama.cpp
+rm -rf "$src"; git init -q "$src"; cd "$src"
+git remote add origin "$LLAMACPP_REPO"
+git fetch -q --depth 1 origin "$LLAMACPP_COMMIT"
+git checkout -q FETCH_HEAD
+got="$(git rev-parse HEAD)"
+[ "$got" = "$LLAMACPP_COMMIT" ] || { echo "llama.cpp commit mismatch: $got != $LLAMACPP_COMMIT" >&2; exit 1; }
+# GGML_NATIVE=OFF + CPU_ALL_VARIANTS: one image runs on any x86-64 CPU (best variant chosen at runtime).
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_NATIVE=OFF \
+  -DGGML_VULKAN=ON -DLLAMA_OPENSSL=ON -DLLAMA_CURL=OFF \
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
+  -DCMAKE_INSTALL_PREFIX=/opt/victorlinux/llama.cpp -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib'
+cmake --build build -j"$(nproc)"
+cmake --install build
+mkdir -p /usr/share/victorlinux
+{
+  echo "llama.cpp_repo=$LLAMACPP_REPO"; echo "llama.cpp_tag=$LLAMACPP_TAG"; echo "llama.cpp_commit=$got"
+  echo "backends=vulkan,cpu(all-variants)"; echo "openssl=on"; echo "curl_download_in_server=off"
+} > /usr/share/victorlinux/llamacpp.build-info
+# strip + sanity
+find /opt/victorlinux/llama.cpp -type f \( -name '*.so*' -o -perm -u+x \) -exec strip --strip-unneeded {} + 2>/dev/null || true
+/opt/victorlinux/llama.cpp/bin/llama-server --version 2>&1 | head -3 || true
+cd /; rm -rf "$src"
+apt-get purge -y $BUILD_DEPS || true
+apt-get autoremove -y --purge
+apt-get clean

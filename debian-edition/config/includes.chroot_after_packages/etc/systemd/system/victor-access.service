@@ -1,0 +1,13 @@
+[Unit]
+Description=VictorLinux: restore owner credentials from the data partition (never from the image)
+After=victor-storage.service live-config.service
+Before=display-manager.service ssh.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/victorlinux/victor-priv access-apply
+SuccessExitStatus=0 2
+
+[Install]
+WantedBy=multi-user.target

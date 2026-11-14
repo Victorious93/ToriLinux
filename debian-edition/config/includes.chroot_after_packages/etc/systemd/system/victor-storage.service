@@ -1,0 +1,16 @@
+[Unit]
+Description=VictorLinux: locate persistent data (VICTORDATA by UUID)
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=victor-access.service display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/bin/install -d -m 0755 -o victor -g victor /run/victor
+ExecStart=/usr/local/lib/victorlinux/victor-priv storage-auto
+# Never fail boot because storage is missing/damaged; the Control Center explains the state.
+SuccessExitStatus=0 2
+
+[Install]
+WantedBy=multi-user.target

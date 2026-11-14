@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Local AI Chat
+Exec=/usr/local/bin/victor-chat
+Icon=internet-chat
+Categories=Utility;
+Terminal=false

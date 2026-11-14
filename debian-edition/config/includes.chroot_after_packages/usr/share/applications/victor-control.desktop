@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VictorLinux Control Center
+Comment=Models, inference, storage, remote access, Kali, diagnostics
+Exec=/usr/local/bin/victor-control
+Icon=preferences-system
+Categories=System;Settings;
+Terminal=false

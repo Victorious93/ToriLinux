@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""First-run owner setup (works offline). Sets the owner's OWN password and optional SSH public key."""
+import subprocess, sys, tkinter as tk
+from tkinter import messagebox, ttk
+PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
+
+def status():
+    return subprocess.run([*PRIV, "owner-status"], capture_output=True, text=True).stdout.strip()
+
+if status() != "locked":
+    sys.exit(0)
+root = tk.Tk(); root.title("VictorLinux first-run setup")
+ttk.Label(root, wraplength=420, padding=8, text="Welcome to VictorLinux. No shared default password exists. Choose your own owner password "
+          "(min 8 chars). It is stored as a hash on your data partition (if one is selected) so it survives reboot; without a data "
+          "partition you will be asked again each boot.").pack()
+p1, p2 = tk.StringVar(), tk.StringVar()
+for lab, v in (("Password", p1), ("Repeat", p2)):
+    ttk.Label(root, text=lab).pack(anchor="w", padx=8); ttk.Entry(root, textvariable=v, show="*").pack(fill="x", padx=8)
+def go():
+    if p1.get() != p2.get() or len(p1.get()) < 8:
+        return messagebox.showerror("Password", "Passwords must match and be at least 8 characters.")
+    r = subprocess.run([*PRIV, "set-password"], input=p1.get() + "\n", capture_output=True, text=True)
+    if r.returncode: return messagebox.showerror("Error", r.stderr)
+    messagebox.showinfo("Done", "Owner password set. SSH stays OFF until you enable it in Control Center > Remote access.")
+    root.destroy()
+ttk.Button(root, text="Save", command=go).pack(pady=8)
+root.mainloop()

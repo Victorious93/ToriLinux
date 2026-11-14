@@ -1,0 +1,12 @@
+#!/bin/bash
+# Open the local llama.cpp chat UI in a DEDICATED browser profile stored on the data partition (chat history persists there).
+set -Eeuo pipefail
+rt=/run/victor/llama.runtime.json
+if ! systemctl --user is-active --quiet victor-llama; then
+  xmessage -center "The inference service is not running. Open Control Center > Status > Start inference." 2>/dev/null || echo "service not running" >&2; exit 1
+fi
+port=$(python3 -c "import json;print(json.load(open('$rt'))['port'])")
+scheme=http; [ "$(python3 -c "import json;print(json.load(open('$rt'))['tls'])")" = True ] && scheme=https
+prof=/run/victor/root/chat/firefox-profile
+mkdir -p "$prof"
+exec firefox-esr --no-remote --profile "$prof" "${scheme}://127.0.0.1:${port}/"

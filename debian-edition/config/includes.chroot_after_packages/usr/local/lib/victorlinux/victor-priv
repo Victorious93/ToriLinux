@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""victor-priv: the ONLY root-level helper for the Control Center. Fixed verbs, strict argument validation.
+
+Callable by the owner via sudoers (no password) for exactly this file. It never executes caller-supplied
+commands, mounts only partitions that are ext4 + label VICTORDATA, and only reads owner-readable key files.
+"""
+import json, os, pwd, re, shutil, subprocess, sys
+sys.path.insert(0, "/usr/local/lib/victorlinux")
+from victorlib.common import *
+from victorlib import storage
+
+OWNER = "victor"
+UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+NFT_TABLE = ("inet", "victor")
+
+
+def die(msg, code=2):
+    print(msg, file=sys.stderr); sys.exit(code)
+
+
+def uid_gid():
+    p = pwd.getpwnam(OWNER)
+    return p.pw_uid, p.pw_gid
+
+
+def set_state(state, message, **extra):
+    uid, gid = uid_gid()
+    os.makedirs(RUN, exist_ok=True)
+    write_json_atomic(STATE_FILE, {"state": state, "message": message, **extra}, 0o644)
+
+
+def link_root(target):
+    if os.path.islink(ROOT_LINK) or os.path.exists(ROOT_LINK):
+        os.unlink(ROOT_LINK)
+    os.symlink(target, ROOT_LINK)
+
+
+def selected_file():
+    return f"{RUN}/selected.uuid"
+
+
+def cmd_mount(uuid):
+    if not UUID_RE.match(uuid):
+        die("invalid UUID")
+    cands = {c["uuid"]: c for c in storage.list_candidates()}
+    if uuid not in cands:
+        if not os.path.ismount(DATA_MP):      # never clobber the state of a healthy, already-mounted partition
+            set_state("missing", f"Data partition {uuid} is not attached.")
+        die(f"No ext4 partition labelled {DATA_LABEL} with UUID {uuid} is attached.")
+    c = cands[uuid]
+    uid, gid = uid_gid()
+    os.makedirs(RUN, exist_ok=True)
+    os.chmod(RUN, 0o755)
+    if os.path.ismount(DATA_MP):
+        run(["umount", DATA_MP])
+    os.makedirs(DATA_MP, exist_ok=True)
+    # filesystem health BEFORE mounting rw
+    fsstate = run(["dumpe2fs", "-h", c["path"]]).stdout
+    clean = "Filesystem state:         clean" in fsstate
+    opts = "nodev,nosuid,noexec,noatime" + ("" if clean else ",ro")
+    r = run(["mount", "-t", "ext4", "-o", opts, f"UUID={uuid}", DATA_MP])
+    if r.returncode != 0:
+        r2 = run(["mount", "-t", "ext4", "-o", opts + ",ro", f"UUID={uuid}", DATA_MP])
+        if r2.returncode != 0:
+            set_state("damaged", "The data partition could not be mounted (filesystem damaged?). Run Storage > Check.",
+                      uuid=uuid, detail=r.stderr.strip()[-300:])
+            die("mount failed: " + r.stderr.strip())
+    # noexec would break running binaries from the data disk; models/outputs never need exec.
+    link_root(DATA_MP)
+    if clean and storage.probe_active() and storage.probe_active()["writable"]:
+        storage.ensure_layout(DATA_MP)
+        run(["chown", "-R", f"{uid}:{gid}", DATA_MP + "/" + "models", DATA_MP + "/chat", DATA_MP + "/settings", DATA_MP + "/images",
+             DATA_MP + "/llama", DATA_MP + "/kali", DATA_MP + "/documents", DATA_MP + "/logs", DATA_MP + "/secrets"])
+        os.chown(DATA_MP, uid, gid)
+    m = storage.probe_active()
+    state, msg = storage.classify_mounted(DATA_MP, m["options"], m["free"], m["writable"])
+    set_state(state, msg, uuid=uuid, device=c["path"], size=c["size"], model=c["model"], serial=c["serial"])
+    open(selected_file(), "w").write(uuid)
+    print(f"{state}: {msg}")
+
+
+def cmd_auto():
+    cands = storage.list_candidates()
+    sel = open(selected_file()).read().strip() if os.path.exists(selected_file()) else None
+    action, uuid, msg = storage.decide(cands, sel)
+    if action == "mount":
+        cmd_mount(uuid)
+    else:
+        set_state(action, msg, candidates=[{k: c[k] for k in ("uuid", "model", "serial", "size", "transport")} for c in cands])
+        print(f"{action}: {msg}")
+
+
+def cmd_session():
+    uid, gid = uid_gid()
+    os.makedirs(SESSION_MP, exist_ok=True)
+    if not os.path.ismount(SESSION_MP):
+        total = mem_info()["total"] or 0
+        run(["mount", "-t", "tmpfs", "-o", f"size={max(total//4, 512*2**20)},mode=0700,uid={uid},gid={gid},nosuid,nodev", "tmpfs", SESSION_MP], check=True)
+    storage.ensure_layout(SESSION_MP)
+    run(["chown", "-R", f"{uid}:{gid}", SESSION_MP])
+    link_root(SESSION_MP)
+    set_state("session", "TEMPORARY SESSION: everything is kept in RAM and is lost at shutdown/reboot.")
+    print("session")
+
+
+def cmd_check():
+    st = read_json(STATE_FILE, {})
+    if not st.get("device"):
+        die("no data partition is active")
+    print(run(["dumpe2fs", "-h", st["device"]]).stdout)
+    print("Read-only structural check requires the partition to be unmounted; run 'storage-repair' to fsck.")
+
+
+def cmd_repair():
+    st = read_json(STATE_FILE, {})
+    dev = st.get("device")
+    if not dev:
+        die("no data partition is active")
+    run(["umount", DATA_MP])
+    r = run(["e2fsck", "-f", "-p", dev], timeout=3600)
+    print(r.stdout, r.stderr)
+    cmd_mount(st["uuid"])
+
+
+def cmd_fw_sync(port, bind, enabled):
+    if not port.isdigit() or not 1024 <= int(port) <= 65535 and port != "22":
+        die("bad port")
+    import ipaddress
+    ip = ipaddress.ip_address(bind)
+    if enabled == "1" and ip.is_loopback:
+        die("refusing to open firewall for loopback")
+    op = "add" if enabled == "1" else "delete"
+    r = run(["nft", op, "element", *NFT_TABLE, "allowed_tcp", f"{{ {int(port)} }}"])
+    if r.returncode and op == "add":
+        die("nft failed: " + r.stderr.strip())
+
+
+def owner_hash():
+    for l in open("/etc/shadow"):
+        f = l.split(":")
+        if f[0] == OWNER:
+            return f[1]
+    return "!"
+
+
+def require_current_password():
+    """First-run (account still locked) needs nothing; any later change needs the CURRENT password on stdin line 1."""
+    h = owner_hash()
+    if h.startswith(("!", "*")) or h == "":
+        return
+    cur = sys.stdin.readline().rstrip("\n")
+    parts = h.split("$")           # ['', '6', salt, hash]
+    if len(parts) < 4 or parts[1] != "6":
+        die("unsupported password hash")
+    chk = run(["openssl", "passwd", "-6", "-salt", parts[2], "-stdin"], input=cur + "\n").stdout.strip()
+    if chk != h:
+        die("current password is wrong")
+
+
+def cmd_password():
+    require_current_password()
+    pw = sys.stdin.readline().rstrip("\n")
+    if len(pw) < 8:
+        die("password must be at least 8 characters")
+    h = run(["openssl", "passwd", "-6", "-stdin"], input=pw + "\n").stdout.strip()
+    if not h.startswith("$6$"):
+        die("hashing failed")
+    run(["usermod", "-p", h, OWNER], check=True)
+    if os.path.isdir(ROOT_LINK):
+        p = os.path.join(root_dir(), "secrets", "owner.shadow")
+        write_json_atomic(p, {"hash": h}, 0o600)
+    # the owner may now use sudo with this password (full admin, deliberately password-gated)
+    run(["usermod", "-aG", "sudo", OWNER])
+    print("owner password set")
+
+
+def cmd_ssh_enable(keyfile, bind):
+    import ipaddress
+    ip = ipaddress.ip_address(bind)
+    if not os.path.isfile(keyfile) or os.path.getsize(keyfile) > 16384:
+        die("key file must be a small regular file")
+    st = os.stat(keyfile)
+    if st.st_uid != uid_gid()[0]:
+        die("key file must be owned by the owner account")
+    lines = []
+    for l in open(keyfile).read().splitlines():
+        l = l.strip()
+        if not l or l.startswith("#"):
+            continue
+        t = run(["ssh-keygen", "-l", "-f", "/dev/stdin"], input=l + "\n")
+        if t.returncode != 0:
+            die("not a valid public key: " + l[:40])
+        lines.append(l)
+    if not lines:
+        die("no public keys found; paste a line from ~/.ssh/id_ed25519.pub")
+    uid, gid = uid_gid()
+    d = "/home/victor/.ssh"
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    open(d + "/authorized_keys", "w").write("\n".join(lines) + "\n")
+    run(["chown", "-R", f"{uid}:{gid}", d]); os.chmod(d + "/authorized_keys", 0o600)
+    os.makedirs("/etc/ssh/sshd_config.d", exist_ok=True)
+    open("/etc/ssh/sshd_config.d/10-victor.conf", "w").write(
+        f"PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers {OWNER}\n"
+        f"ListenAddress {bind}\nAllowAgentForwarding no\nX11Forwarding no\n")
+    run(["ssh-keygen", "-A"], check=True)
+    run(["systemctl", "enable", "--now", "ssh"], check=True)
+    run(["nft", "add", "element", *NFT_TABLE, "allowed_tcp", "{ 22 }"])
+    print(f"SSH enabled on {bind}:22 (key auth only)")
+
+
+def cmd_revoke():
+    run(["systemctl", "disable", "--now", "ssh", "ssh.socket"])
+    for p in ("/home/victor/.ssh/authorized_keys", "/etc/ssh/sshd_config.d/10-victor.conf"):
+        if os.path.exists(p):
+            os.unlink(p)
+    run(["nft", "flush", "set", *NFT_TABLE, "allowed_tcp"])
+    print("remote access revoked: SSH disabled, keys removed, firewall closed. "
+          "Run 'victor-ctl api rotate-key' to invalidate API clients.")
+
+
+def cmd_reset_owner():
+    require_current_password()
+    run(["passwd", "-l", OWNER]); cmd_revoke()
+    if os.path.isdir(ROOT_LINK):
+        p = os.path.join(root_dir(), "secrets", "owner.shadow")
+        if os.path.exists(p):
+            os.unlink(p)
+    print("owner password removed; first-run setup will run again at next login")
+
+
+def cmd_owner_status():
+    print("locked" if owner_hash().startswith(("!", "*")) or owner_hash() == "" else "set")
+
+
+def cmd_access_apply():
+    if os.path.isdir(ROOT_LINK):
+        p = os.path.join(root_dir(), "secrets", "owner.shadow")
+        h = (read_json(p, {}) or {}).get("hash")
+        if h and h.startswith("$6$"):
+            run(["usermod", "-p", h, OWNER]); run(["usermod", "-aG", "sudo", OWNER])
+            print("owner credentials restored from the data partition")
+
+
+VERBS = {"storage-mount": (cmd_mount, 1), "storage-auto": (cmd_auto, 0), "storage-session": (cmd_session, 0),
+         "storage-check": (cmd_check, 0), "storage-repair": (cmd_repair, 0), "fw-sync": (cmd_fw_sync, 3),
+         "set-password": (cmd_password, 0), "ssh-enable": (cmd_ssh_enable, 2), "revoke": (cmd_revoke, 0),
+         "reset-owner": (cmd_reset_owner, 0), "owner-status": (cmd_owner_status, 0), "access-apply": (cmd_access_apply, 0)}
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        die("must run as root via sudo")
+    if len(sys.argv) < 2 or sys.argv[1] not in VERBS:
+        die("verbs: " + ", ".join(VERBS))
+    fn, n = VERBS[sys.argv[1]]
+    if len(sys.argv) - 2 != n:
+        die(f"{sys.argv[1]} takes {n} argument(s)")
+    try:
+        fn(*sys.argv[2:])
+    except VictorError as e:
+        die(str(e))
