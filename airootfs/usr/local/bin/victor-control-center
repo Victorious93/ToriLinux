@@ -1,0 +1,3 @@
+#!/bin/sh
+# Start the VictorLinux Control Center (local-only web UI) as the current, unprivileged user.
+exec python3 -I /usr/local/lib/victorlinux/control_center.py "$@"

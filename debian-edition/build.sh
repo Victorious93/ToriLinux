@@ -59,6 +59,8 @@ cp -a "$HERE/config/package-lists/." config/package-lists/
 cp -a "$HERE/config/hooks/live/." config/hooks/live/
 mkdir -p config/includes.chroot_after_packages
 cp -a "$HERE/config/includes.chroot_after_packages/." config/includes.chroot_after_packages/
+install -m 0644 "$HERE/../airootfs/usr/local/lib/victorlinux/model_advisor.py" \
+  config/includes.chroot_after_packages/usr/local/lib/victorlinux/model_advisor.py
 if [ "$PROFILE" = nvidia ]; then
   cp config/package-lists/90-nvidia.list.chroot.nvidia config/package-lists/90-nvidia.list.chroot
 fi

@@ -1,4 +1,4 @@
-# Building ToriLinux
+# Building VictorLinux
 
 ## Network: build time vs. run time
 
@@ -18,7 +18,7 @@ scripts/build.sh [amd|cuda|rocm] [headless|gui|empty] [--packs a,b,c]
 * With Docker/Podman it runs `archlinux:latest` privileged and calls `scripts/build-inner.sh`.
 * On Arch as root it runs `scripts/build-inner.sh` directly.
 * Disk: allow ~20 GB for the lean image, much more for CUDA/HIP/packs (tens of GB).
-* Outputs in `out/`: `torilinux-*.iso`, `*.iso.sha256`, `manifest-*.json`, `packages-*.txt`, `build-*.log`.
+* Outputs in `out/`: `victorlinux-*.iso`, `*.iso.sha256`, `manifest-*.json`, `packages-*.txt`, `build-*.log`.
 
 `scripts/check-packages.sh` (run in Arch) verifies every package exists in the pinned snapshot before a long build.
 

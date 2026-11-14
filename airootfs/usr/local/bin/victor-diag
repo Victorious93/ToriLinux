@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Print diagnostics (GPU, VRAM, backend, permissions, storage, recent log). Safe to paste into a bug report."""
+import sys
+import os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "victorlinux"))
+import control_center as cc  # noqa: E402
+cc.APP = cc.App.__new__(cc.App)
+cc.APP.llm = cc.Proc("llama")
+print(cc.App.diagnostics(cc.APP))

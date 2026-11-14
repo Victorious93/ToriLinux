@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VictorLinux Control Center</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1018;--card:#141d2a;--fg:#edf2fa;--mut:#a2b0c5;--acc:#b7a0ff;--ok:#70dfb5;--warn:#f1c575;--bad:#ff939f;--bd:#293548}
+*{box-sizing:border-box}body{margin:0;font:15px/1.6 system-ui,sans-serif;background:radial-gradient(ellipse at 80% 0,#201d38 0,transparent 48%),var(--bg);color:var(--fg);min-height:100vh}
+header{display:flex;align-items:center;gap:16px;padding:24px max(24px,calc((100vw - 1180px)/2));border-bottom:1px solid var(--bd);background:#0b1018e8;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;flex:1}.mark{display:grid;place-items:center;width:46px;height:46px;border-radius:16px;background:linear-gradient(135deg,#c9b8ff,#86b9f3);color:#17112c;font-size:23px;font-weight:800}.brand h1{font-size:20px;letter-spacing:-.5px;margin:0;line-height:1.3}.brand small{color:var(--mut);font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+nav{display:flex;gap:6px;padding:6px;margin:26px auto 20px;width:fit-content;max-width:calc(100% - 32px);border:1px solid var(--bd);border-radius:28px;background:#111925;flex-wrap:wrap}
+nav button{background:none;border:1px solid transparent;color:var(--mut);padding:11px 18px;border-radius:22px;cursor:pointer;display:flex;gap:9px;align-items:center;font:600 13px system-ui;transition:background .15s,color .15s}
+nav button:hover{background:#202a3b;color:var(--fg)}nav button.on{color:#18102e;background:var(--acc);box-shadow:0 4px 18px #0003}
+main{padding:0 24px 48px;max-width:1230px;margin:auto}section{display:none}section.on{display:block;animation:appear .18s ease-out}@keyframes appear{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}
+.hero{display:flex;align-items:center;justify-content:space-between;gap:24px;margin:24px 0}.eyebrow{color:var(--acc);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase}.hero h2{font-size:clamp(25px,4vw,36px);margin:5px 0;line-height:1.2;letter-spacing:-1px}.hero p{color:var(--mut);margin:8px 0;max-width:600px}.hero-badge{color:var(--ok);border:1px solid #366655;border-radius:24px;padding:9px 16px;white-space:nowrap;font-size:12px;background:#11291f}
+.card{min-width:0;background:linear-gradient(135deg,#182233,#121b28);border:1px solid var(--bd);border-radius:24px;padding:24px;margin:16px 0;box-shadow:0 12px 32px #0002}.card h2{margin:0 0 18px;font-size:16px;font-weight:650;display:flex;gap:10px;align-items:center}.card h2 svg{color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px}.grid>.card{margin:0}
+button.b{background:var(--acc);color:#18102e;border:1px solid transparent;padding:10px 17px;border-radius:16px;cursor:pointer;font:600 13px system-ui;min-height:42px;transition:filter .15s,transform .15s}button.b:hover{filter:brightness(1.12)}button.b:active{transform:translateY(1px)}button.b.s{background:#253248;color:var(--fg);border-color:#394961}button.b.d{background:#38202d;color:#ffafba;border-color:#613646}button:disabled{opacity:.45;cursor:default}
+input,select{background:#0c1420;color:var(--fg);border:1px solid #3c4d65;border-radius:13px;padding:10px 12px;max-width:100%;min-height:42px;font:inherit}input[type=checkbox]{min-height:0;accent-color:var(--acc)}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:4px}a{color:var(--acc)}label{display:block;margin:12px 0 5px;color:var(--mut);font-size:12px;font-weight:600}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}.row>div{max-width:100%}
+.bar{height:8px;background:#0b111b;border-radius:99px;overflow:hidden;margin:10px 0 18px}.bar>i{display:block;height:100%;background:linear-gradient(90deg,#9679ef,#92c6f7);border-radius:99px}
+.pill{padding:5px 11px;border-radius:99px;font-size:11px;border:1px solid var(--bd);white-space:nowrap}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.banner{padding:14px 18px;border-radius:18px;margin:14px 0;border:1px solid;overflow-wrap:anywhere;font-size:13px}.banner.warn{background:#282218;border-color:#6c5731}.banner.bad{background:#2e1c27;border-color:#74414e}.banner.ok{background:#122a24;border-color:#31594c}
+pre{background:#0c1420;border:1px solid var(--bd);border-radius:18px;padding:16px;overflow:auto;max-height:380px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:12px 8px;border-bottom:1px solid var(--bd);font-size:13px;overflow-wrap:anywhere}th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px}.table-wrap{overflow-x:auto}.mut{color:var(--mut)}svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px;flex-shrink:0}code{background:#0c1420;padding:3px 7px;border-radius:7px;overflow-wrap:anywhere}#toast{position:fixed;bottom:16px;right:16px;max-width:min(420px,calc(100vw - 32px));z-index:9}#hw,#dirs,#conn,#llmState{overflow-wrap:anywhere}.model-choice{padding:15px 0;border-bottom:1px solid var(--bd)}.model-choice:last-child{border:0}footer{color:var(--mut);font-size:11px;text-align:center;padding:14px 24px 28px}
+@media(max-width:600px){header{padding:20px;gap:10px}header>.pill.mut{display:none}.brand h1{font-size:18px}nav{margin:18px 16px}nav button{padding:10px 14px;font-size:12px}main{padding:0 16px 32px}.card{padding:18px;border-radius:22px}.hero{display:block}.hero-badge{display:inline-block;margin-top:8px}#stTable{min-width:620px}.row>input{min-width:0}.grid{gap:14px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<svg style="display:none"><defs>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></symbol>
+<symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 12l9-5M12 12v10M12 12L3 7"/></symbol>
+<symbol id="i-disk" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></symbol>
+<symbol id="i-net" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"/></symbol>
+<symbol id="i-log" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h8M8 17h5"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+<symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/></symbol>
+</defs></svg>
+<header><div class="brand"><div class="mark" aria-hidden="true">V</div><div><h1>VictorLinux</h1><small>Victorious Framework</small></div></div><span id="storagePill" class="pill">storage…</span><span class="pill mut">Local AI · dark by design</span></header>
+<nav id="nav" role="tablist" aria-label="Control Center"></nav>
+<main>
+<div id="banners"></div>
+<section id="t-dash">
+ <div class="hero"><div><div class="eyebrow">Your portable AI workspace</div><h2>Your AI. Your hardware.</h2><p>Private inference, wherever you boot. Choose storage, import a model, and make this PC your workspace.</p></div><span class="hero-badge">● Offline inference</span></div>
+ <div class="grid">
+  <div class="card"><h2><svg><use href="#i-cube"/></svg>Inference server</h2><div id="llmState"></div>
+   <div class="row"><button class="b" id="bStart"><svg><use href="#i-play"/></svg> Start</button><button class="b d" id="bStop"><svg><use href="#i-stop"/></svg> Stop / unload</button>
+   <button class="b s" id="bChat"><svg><use href="#i-chat"/></svg> Open chat</button></div></div>
+  <div class="card"><h2>Memory</h2><div id="mem"></div></div>
+ </div>
+ <div class="card"><h2>Hardware &amp; backend</h2><div id="hw"></div></div>
+ <div class="card"><h2>Find the right model for this PC</h2><p class="mut">Check live memory and available backends before importing a model. Recommendations are estimates; no download starts automatically.</p><button class="b s" id="bAdvice">Check this PC &amp; suggest models</button><div id="advice" aria-live="polite"></div></div>
+ <div class="card"><h2><svg><use href="#i-img"/></svg>Optional apps</h2><div id="svcs"></div></div>
+</section>
+<section id="t-models">
+ <div class="card"><h2>Select model &amp; runtime</h2>
+  <label>Model (.gguf)</label><select id="mSel" style="width:100%"></select>
+  <div class="row"><div><label>Backend</label><select id="sBackend"><option>auto</option><option>vulkan</option><option>hip</option><option>cuda</option><option>cpu</option></select></div>
+  <div><label>Context length</label><input id="sCtx" type="number" min="256" step="256" style="width:110px"></div>
+  <div><label>Auto context</label><label class="mut" style="display:block"><input id="sCtxAuto" type="checkbox"> size from this PC's free memory at every start</label></div>
+  <div><label>GPU layers (-1 auto)</label><input id="sNgl" type="number" style="width:90px"></div>
+  <div><label>Threads (0 auto)</label><input id="sThr" type="number" style="width:80px"></div>
+  <div><label>RAM cap MiB (0 none)</label><input id="sMem" type="number" style="width:100px"></div>
+  <div><label>Idle unload s (0 off)</label><input id="sIdle" type="number" style="width:100px"></div></div>
+  <div id="est" class="mut" style="margin:8px 0">Pick a model to see the estimate.</div>
+  <div class="row"><button class="b" id="bSave">Save settings</button><button class="b s" id="bEst">Re-estimate</button></div>
+  <p class="mut">The RAM cap is an estimate-based safety check (start is refused if the estimate exceeds it), not a kernel-enforced limit.</p></div>
+ <div class="card"><h2>Import a model</h2>
+  <p class="mut">Copies a <code>.gguf</code> into persistent storage after validating its header. Downloading models is never automatic.</p>
+  <label>Full path to the file (e.g. on a mounted USB/disk)</label><input id="iSrc" style="width:100%" placeholder="/run/media/... or /mnt/victor-ro/<uuid>/model.gguf">
+  <label>Expected SHA-256 (optional but recommended)</label><input id="iSha" style="width:100%">
+  <div class="row"><button class="b" id="bImp">Validate &amp; import</button></div><div id="impSt"></div></div>
+ <div class="card"><h2>Model directories</h2><div id="dirs" class="mut"></div>
+  <div class="row"><input id="dAdd" placeholder="/mnt/victor-ro/<uuid>/models" style="flex:1"><button class="b s" id="bDir">Add directory</button></div></div>
+</section>
+<section id="t-storage">
+ <div class="card"><h2><svg><use href="#i-disk"/></svg>Persistent storage</h2><div id="stState"></div>
+  <p class="mut">Only an ext4/btrfs/xfs partition labelled <code>VICTORDATA</code> (legacy <code>TORIDATA</code> also accepted) is picked automatically. Models, chats, settings, images, outputs, documents and logs live on it; the operating system itself does <b>not</b> persist.</p>
+  <div class="table-wrap"><table id="stTable"></table></div>
+  <div class="row"><button class="b d" id="bTemp">Start temporary session (RAM only)</button></div></div>
+</section>
+<section id="t-remote">
+ <div class="card"><h2><svg><use href="#i-net"/></svg>PC inference server (for DroidCommand-AI and other clients)</h2>
+  <div id="rmState"></div>
+  <div class="row"><div><label>Bind address</label><input id="rBind" style="width:150px"></div>
+  <div><label>Port</label><input id="rPort" type="number" style="width:90px"></div>
+  <div><label><input type="checkbox" id="rEn"> Allow remote access (needs API key)</label></div>
+  <div><label><input type="checkbox" id="rTls"> HTTPS (self-signed)</label></div></div>
+  <div class="row"><button class="b" id="bRem">Apply</button><button class="b s" id="bKey">Create / rotate API key</button><button class="b d" id="bRev">Revoke all remote access</button></div>
+  <div id="keyBox"></div>
+  <div class="row"><input id="tlsHost" placeholder="hostname or IP for certificate"><button class="b s" id="bTls">Generate TLS certificate</button></div>
+  <div id="conn" class="mut"></div>
+  <div class="row"><button class="b s" id="bCap">Run capability test (streaming + tool calling)</button></div><pre id="capOut" style="display:none"></pre>
+  <p class="mut">Remote inference never allows tool execution on this PC. Binding to a LAN/VPN address is your explicit choice; prefer a private VPN (see docs/remote-access.md).</p></div>
+ <div class="card"><h2><svg><use href="#i-lock"/></svg>SSH (off by default)</h2><div id="sshState"></div>
+  <label>Public key (ssh-ed25519 …)</label><input id="sshKey" style="width:100%">
+  <div class="row"><button class="b s" id="bSshAdd">Add key</button><input id="sshListen" value="127.0.0.1" style="width:150px" title="Listen address">
+  <button class="b" id="bSshOn">Enable</button><button class="b s" id="bSshOff">Disable</button><button class="b d" id="bSshReset">Remove all keys &amp; disable</button></div></div>
+</section>
+<section id="t-logs">
+ <div class="card"><h2><svg><use href="#i-log"/></svg>Logs</h2><div class="row"><select id="lSel"></select><button class="b s" id="bLog">Refresh</button></div><pre id="logOut"></pre></div>
+ <div class="card"><h2>Diagnostics</h2><div class="row"><button class="b" id="bDiag">Collect</button><button class="b s" id="bCopy">Copy to clipboard</button></div><pre id="diagOut"></pre></div>
+ <div class="card"><h2>Power</h2><div class="row"><button class="b s" id="bReboot">Reboot</button><button class="b d" id="bOff">Power off</button></div></div>
+</section>
+</main><footer>VictorLinux · Victorious Framework · Your models and work stay with you.</footer><div id="toast" role="status" aria-live="polite"></div>
+<script>
+const $=id=>document.getElementById(id);
+const h=location.hash.match(/t=([\w-]+)/);if(h){sessionStorage.tok=h[1];history.replaceState(null,"",location.pathname)}
+const TOK=sessionStorage.tok||"";
+async function api(p,body){try{const r=await fetch(p,{method:body===undefined?"GET":"POST",headers:{"X-Victor-Token":TOK,"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});let j;try{j=await r.json()}catch(e){j={error:"Invalid response ("+r.status+")"}}if(!r.ok&&!j.error)j.error="HTTP "+r.status;return j}catch(e){return {error:"Control Center is unavailable. Reopen it or check the service log."}}}
+function toast(m,k){const d=document.createElement("div");d.className="banner "+(k||"ok");d.textContent=m;$("toast").appendChild(d);setTimeout(()=>d.remove(),k==="bad"?12000:5000)}
+function res(j,okm){if(j&&(j.ok===false||j.error)){toast(j.error||"failed","bad");return false}toast(okm||j.message||"Done");return true}
+const G=n=>n==null?"?":(n/2**30).toFixed(1)+" GiB";
+const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["storage","disk","Storage"],["remote","net","Server & Access"],["logs","log","Logs & Diagnostics"]];
+$("nav").innerHTML=tabs.map(t=>`<button role="tab" id="tab-${t[0]}" aria-controls="t-${t[0]}" data-t="${t[0]}"><svg><use href="#i-${t[1]}"/></svg>${t[2]}</button>`).join("");
+function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on))});sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="logs")loadLog()}
+$("nav").onclick=e=>{const b=e.target.closest("button");if(b)show(b.dataset.t)};
+let S=null,remoteDirty=false;
+$("sCtxAuto").addEventListener("change",()=>{$("sCtx").disabled=$("sCtxAuto").checked});
+["rBind","rPort","rEn","rTls"].forEach(id=>$(id).addEventListener("input",()=>remoteDirty=true));
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+async function refresh(){const s=await api("/api/status");if(s.error){$("banners").innerHTML=`<div class="banner bad">${esc(s.error)}</div>`;return}
+ S=s;const p=s.persist,mode=p.mode;const cls={persistent:"ok",temporary:"warn"}[mode]||"bad";
+ $("storagePill").className="pill "+cls;$("storagePill").textContent={persistent:"persistent storage",temporary:"TEMPORARY – not saved",readonly:"storage read-only",missing:"no storage",ambiguous:"choose storage"}[mode]||mode;
+ let b="";if(mode!=="persistent")b+=`<div class="banner ${mode==="temporary"?"warn":"bad"}"><b>${esc(p.message)}</b> ${mode!=="temporary"?'Open the Storage tab to choose a drive, or start a temporary session.':""}</div>`;
+ if(s.backend.selected==="cpu"||!s.backend.selected)b+=`<div class="banner warn"><b>CPU fallback:</b> ${esc(s.backend.reason)}</div>`;
+ const acc=s.llm.accel;if(s.llm.running&&acc&&acc.gpu_accelerated===false&&s.llm.info.backend!=="cpu")b+=`<div class="banner bad"><b>GPU backend selected but 0 layers were offloaded.</b> Inference is running on the CPU. See Logs.</div>`;
+ $("banners").innerHTML=b;
+ const l=s.llm;$("llmState").innerHTML=l.running?`<p><span class="ok">● running</span> · backend <b>${esc(l.info.backend)}</b> · layers on GPU requested: ${l.info.ngl}<br>${acc&&acc.offloaded_layers!=null?`<b>Verified from server log:</b> ${acc.offloaded_layers}/${acc.total_layers} layers on GPU`:'<span class="mut">GPU offload not yet confirmed by log</span>'}<br><span class="mut">${esc(l.info.model)}</span></p>`:`<p><span class="mut">● stopped</span> · would use <b>${esc(s.backend.selected||"none")}</b>: ${esc(s.backend.reason)}</p>`;
+ $("bStart").disabled=l.running;$("bStop").disabled=!l.running&&!s.gateway.running;
+ const ram=s.ram,used=ram.total-ram.available;let m=`<div>RAM ${G(used)} / ${G(ram.total)}</div><div class="bar"><i style="width:${used/ram.total*100}%"></i></div>`;
+ for(const g of s.gpus){if(g.vram_total!=null)m+=`<div style="margin-top:8px">VRAM (${esc(g.name)}) ${G(g.vram_used)} / ${G(g.vram_total)}</div><div class="bar"><i style="width:${g.vram_used/g.vram_total*100}%"></i></div>`}
+ if(!s.gpus.length)m+=`<p class="mut">No GPU detected.</p>`;$("mem").innerHTML=m;
+ $("hw").innerHTML=(s.gpus.map(g=>`<div><b>${esc(g.name)}</b> <span class="mut">${esc(g.pci_id||"")} driver ${esc(g.driver||"?")}</span></div>`).join("")||"<div>No GPU detected</div>")+
+  `<div class="mut">Backends in this image: ${Object.entries(s.backends_present).map(([k,v])=>k+(v?" ✓":" ✗")).join(" · ")}</div>`+
+  s.render_nodes.map(n=>`<div class="${n.accessible?"":"bad"}">${esc(n.path)} ${n.accessible?"accessible":"NOT accessible – check video/render group"}</div>`).join("");
+ $("svcs").innerHTML=s.services.map(v=>`<div class="row"><b style="min-width:170px">${esc(v.label)}</b>${v.installed?`<span class="${v.running?"ok":"mut"}">${v.running?"● running":"● stopped"}</span><button class="b s" data-svc="${v.name}" data-act="${v.running?"stop":"start"}">${v.running?"Stop":"Start"}</button>${v.running?`<a href="${v.url}" target="_blank" style="color:var(--acc)">Open</a>`:""}`:`<span class="mut">not installed in this image (optional pack)</span>`}</div>`).join("");
+ fillSettings(s);fillRemote(s);
+}
+let filled=false;function fillSettings(s){if(filled)return;filled=true;const c=s.settings;["Backend","Ctx","Ngl","Thr","Mem","Idle"].forEach(()=>{});
+ $("sBackend").value=c.backend;$("sCtx").value=c.ctx;$("sCtxAuto").checked=c.ctx_auto!==false;$("sCtx").disabled=c.ctx_auto!==false;$("sNgl").value=c.gpu_layers;$("sThr").value=c.threads;$("sMem").value=c.memory_limit_mb;$("sIdle").value=c.idle_unload_s;loadModels()}
+async function loadModels(){const j=await api("/api/models");if(j.error)return;const cur=S.settings.model;$("mSel").innerHTML=`<option value="">(none)</option>`+j.models.map(m=>`<option value="${esc(m.path)}" ${m.path===cur?"selected":""}>${esc(m.name)} — ${G(m.size)}</option>`).join("");
+ $("dirs").innerHTML=j.dirs.filter(Boolean).map(esc).join("<br>");if(cur)estimate()}
+async function estimate(){const p=$("mSel").value;if(!p){$("est").textContent="Pick a model to see the estimate.";return}const j=await api(`/api/estimate?path=${encodeURIComponent(p)}&ctx=${$("sCtx").value}`);
+ if(j.error){$("est").innerHTML=`<span class="bad">${esc(j.error)}</span>`;return}const e=j.estimate;
+ $("est").innerHTML=`<b>${esc(e.arch||"?")}</b> · weights ${G(e.weights)} + KV cache ${e.kv_known?G(e.kv_cache):"unknown"} + overhead ${G(e.overhead)} = <b>~${G(e.total)}</b> needed · free VRAM ${G(j.vram_free)} · free disk where stored ${G(j.disk)}<br>`+j.fit.notes.map(n=>`<div class="${j.fit.level==="ok"?"ok":j.fit.level==="warn"?"warn":"bad"}">${esc(n)}</div>`).join("")}
+$("mSel").onchange=estimate;$("bEst").onclick=estimate;
+$("bSave").onclick=async()=>{if(res(await api("/api/settings",{model:$("mSel").value,backend:$("sBackend").value,ctx:+$("sCtx").value,ctx_auto:$("sCtxAuto").checked,gpu_layers:+$("sNgl").value,threads:+$("sThr").value,memory_limit_mb:+$("sMem").value,idle_unload_s:+$("sIdle").value}),"Settings saved"))refresh()};
+$("bDir").onclick=async()=>{const d=$("dAdd").value.trim();if(!d)return;const cur=S.settings.extra_model_dirs.concat([d]);if(res(await api("/api/settings",{extra_model_dirs:cur}),"Directory added")){filled=false;await refresh();loadModels()}};
+$("bStart").onclick=async()=>{$("bStart").disabled=true;toast("Starting… (large models take a while to load)");const j=await api("/api/llm/start",{});if(j.ok){toast("Server started")}else{toast(j.error+(j.log?"\n"+j.log.slice(-400):""),"bad")}refresh()};
+$("bStop").onclick=async()=>{if(res(await api("/api/llm/stop",{}),"Stopped; model unloaded"))refresh()};
+$("bChat").onclick=()=>{if(!S.llm.running){toast("Start the inference server first.","warn");return}window.open(`${S.settings.remote.tls?"https":"http"}://127.0.0.1:${S.settings.remote.port}/`,"_blank")};
+$("svcs").onclick=async e=>{const b=e.target.closest("button[data-svc]");if(!b)return;let j=await api(`/api/service/${b.dataset.svc}/${b.dataset.act}`,{});
+ if(j.needs_force&&confirm(j.error+"\n\nStart anyway?"))j=await api(`/api/service/${b.dataset.svc}/${b.dataset.act}`,{force:true});if(res(j,"OK"))refresh()};
+$("bImp").onclick=async()=>{if(res(await api("/api/import",{src:$("iSrc").value.trim(),sha256:$("iSha").value.trim()}),"Import started"))pollImp()};
+async function pollImp(){const j=await api("/api/import/status");if(j.state==="running"){$("impSt").textContent=`Copying… ${G(j.done)} / ${G(j.total)}`;setTimeout(pollImp,1000)}else if(j.state==="done"){$("impSt").innerHTML=`<span class="ok">Imported ${esc(j.path)}</span><br>sha256 ${j.sha256} ${j.verified?"(matches the value you supplied)":"(no expected checksum supplied — integrity not checked against a source)"}`;filled=false;await refresh();loadModels()}else if(j.state==="error")$("impSt").innerHTML=`<span class="bad">${esc(j.error)}</span>`}
+async function loadStorage(){const j=await api("/api/storage");if(j.error){$("stState").innerHTML=`<span class="bad">${esc(j.error)}</span>`;return}
+ $("stState").innerHTML=`<div class="banner ${j.state&&j.state.mode==="persistent"?"ok":"warn"}">${esc(j.state?j.state.message:"unknown")}</div>`;
+ $("stTable").innerHTML="<tr><th>Device</th><th>Label</th><th>FS</th><th>Size</th><th>Model / serial</th><th></th></tr>"+j.partitions.map(p=>`<tr><td>${esc(p.path)}${p.removable?" (removable)":""}</td><td>${esc(p.label||"")}</td><td>${esc(p.fstype)}</td><td>${G(p.size)}</td><td>${esc(p.model)} ${esc(p.serial||"")}</td><td>${p.persist_ok?`<button class="b" data-use="${esc(p.uuid)}">Use for storage</button>`:""} ${p.ro_ok?`<button class="b s" data-ro="${esc(p.uuid)}">Mount read-only for models</button>`:""}</td></tr>`).join("")}
+$("stTable").onclick=async e=>{const b=e.target.closest("button");if(!b)return;if(b.dataset.use){if(!confirm("Use this partition for VictorLinux data? Existing data is reused; a new drive uses a 'victorlinux' folder. Nothing is formatted."))return;if(res(await api("/api/storage/select",{uuid:b.dataset.use}),"Storage active")){filled=false;refresh();loadStorage()}}
+ else if(b.dataset.ro){if(res(await api("/api/storage/mount-ro",{uuid:b.dataset.ro}),"Mounted read-only and added to model directories")){filled=false;refresh();loadStorage()}}};
+$("bTemp").onclick=async()=>{if(confirm("Temporary session: models, chats and settings are kept in RAM and LOST on reboot. Continue?")&&res(await api("/api/storage/temp",{}),"Temporary session active")){filled=false;refresh()}};
+function fillRemote(s){const r=s.settings.remote;if(!remoteDirty){$("rBind").value=r.enabled?r.bind:"0.0.0.0";$("rPort").value=r.port;$("rEn").checked=r.enabled;$("rTls").checked=r.tls;}
+ $("rmState").innerHTML=r.enabled?`<div class="banner warn"><b>Remote access ON</b> – listening on ${esc(r.bind)}:${r.port}, API key required${r.tls?", HTTPS":", plain HTTP (use a VPN or enable HTTPS)"}.</div>`:`<div class="banner ok">Local only: 127.0.0.1:${r.port}. ${s.has_api_key?"An API key exists.":"No API key yet."}</div>`;
+ const sc=r.tls?"https":"http";$("conn").innerHTML=`Base URL: <code>${sc}://&lt;this-pc-address&gt;:${r.port}/v1</code> · Health: <code>/victor/health</code> · Capabilities: <code>/victor/capabilities</code> · Header: <code>Authorization: Bearer &lt;key&gt;</code>`;
+ const x=s.ssh;$("sshState").innerHTML=x&&!x.error?`<div class="banner ${x.active?"warn":"ok"}">SSH ${x.active?"RUNNING on "+esc(x.listen):"stopped"} · ${x.authorized_keys} authorized key(s) · key authentication only</div>`:`<span class="bad">${esc(x&&x.error)}</span>`}
+$("bRem").onclick=async()=>{const en=$("rEn").checked;if(en&&!confirm("This exposes inference on "+$("rBind").value+". Only do this on networks you trust or over a VPN. Continue?"))return;if(res(await api("/api/remote",{enabled:en,bind:$("rBind").value,port:+$("rPort").value,tls:$("rTls").checked}),"Applied")){remoteDirty=false;refresh()}};
+$("bKey").onclick=async()=>{if(!confirm("Create a new API key? Any existing key stops working."))return;const j=await api("/api/remote/new-key",{});if(res(j,"Key created")){$("keyBox").innerHTML=`<div class="banner warn">New API key (shown once): <code>${esc(j.api_key)}</code></div>`;refresh()}};
+$("bRev").onclick=async()=>{if(confirm("Delete the API key and return to local-only?")&&res(await api("/api/remote/revoke",{}),"Remote access revoked")){$("keyBox").innerHTML="";remoteDirty=false;refresh()}};
+$("bTls").onclick=async()=>{res(await api("/api/remote/tls-cert",{host:$("tlsHost").value}))};
+$("bCap").onclick=async()=>{$("capOut").style.display="block";$("capOut").textContent="Running real requests against the loaded model…";const j=await api("/api/capcheck",{});$("capOut").textContent=j.output||j.error};
+const ssh=a=>async()=>{if(res(await api("/api/ssh",{action:a,key:$("sshKey").value,listen:$("sshListen").value})))refresh()};
+$("bSshAdd").onclick=ssh("add-key");$("bSshOn").onclick=ssh("enable");$("bSshOff").onclick=ssh("disable");$("bSshReset").onclick=ssh("reset");
+async function loadLog(){const sel=$("lSel");if(!sel.options.length)sel.innerHTML=["llama","gateway","comfyui","automatic","sillytavern"].map(x=>`<option>${x}</option>`).join("");const j=await api("/api/logs?name="+sel.value);$("logOut").textContent=j.log||j.error||"(empty)"}
+$("bLog").onclick=loadLog;$("lSel").onchange=loadLog;
+$("bDiag").onclick=async()=>{const j=await api("/api/diagnostics");$("diagOut").textContent=j.text||j.error};
+$("bCopy").onclick=async()=>{try{await navigator.clipboard.writeText($("diagOut").textContent);toast("Copied")}catch(e){toast("Copy failed; select the text manually","warn")}};
+$("bReboot").onclick=async()=>{if(confirm("Reboot now?"))res(await api("/api/power",{action:"reboot"}))};$("bOff").onclick=async()=>{if(confirm("Power off now?"))res(await api("/api/power",{action:"poweroff"}))};
+$("bAdvice").onclick=async()=>{$("bAdvice").disabled=true;$("advice").textContent="Checking this PC…";const j=await api("/api/recommendations");$("bAdvice").disabled=false;if(j.error){$("advice").textContent=j.error;return}const h=j.host||{};const vt={"verified-here":["ok","Loaded and generated on this PC"],"verified-elsewhere":["warn","Worked on other hardware; re-test here"],untested:["warn","Not tested on this PC"]};
+$("advice").innerHTML=`<p><b>${esc(j.cpu.name)}</b> · ${j.cpu.threads} logical CPUs · ${G(j.ram.available)} RAM available</p><p class="mut">Memory pool: ${esc(h.memory_kind||"?")}${h.device?" · "+esc(h.device):""} · planning budget ${G(h.budget||0)} · default threads ${h.threads_default||"?"}</p>`+(h.notes||[]).map(n=>`<p class="mut">${esc(n)}</p>`).join("")+
+(j.local&&j.local.length?`<h3>Your models, ranked for this PC</h3><p class="mut">${esc(j.local_note)}</p>`+j.local.map(m=>{const v=vt[m.verified]||vt.untested;return `<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="fits"?"ok":"warn"}">${esc(m.fit)}</span> <span class="pill ${v[0]}">${esc(v[1])}</span><p class="mut">${m.ctx?`~${G(m.estimated_total)} at ${m.ctx} context · `:""}${esc(m.reason)}</p></div>`}).join(""):"")+
+`<h3>Optional catalog (not downloaded)</h3><p class="mut">${esc(j.note)}</p>`+j.models.map(m=>`<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="recommended"?"ok":"warn"}">${esc(m.fit)}</span><p class="mut">~${G(m.estimated_total)} at ${m.context} context · ${esc(m.reason)}</p><a href="${esc(m.source)}" target="_blank" rel="noreferrer">Official model card ↗</a></div>`).join("")};
+document.querySelectorAll("label").forEach(label=>{const next=label.nextElementSibling;if(next&&next.id&&["INPUT","SELECT"].includes(next.tagName))label.htmlFor=next.id});
+show(sessionStorage.tab||"dash");refresh();setInterval(refresh,4000);
+</script></body></html>

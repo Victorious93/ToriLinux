@@ -1,5 +1,5 @@
-# ToriLinux: no blanket sudo. The unprivileged 'tori' user may run exactly one restricted
-# helper (see /etc/sudoers.d/10-tori). root has no password; there is no wheel NOPASSWD rule.
+# VictorLinux: no blanket sudo. The unprivileged 'victor' user may run exactly one restricted
+# helper (see /etc/sudoers.d/10-victor). root has no password; there is no wheel NOPASSWD rule.
 Defaults lecture="never"
 Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/bin"
 @includedir /etc/sudoers.d

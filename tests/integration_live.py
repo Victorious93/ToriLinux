@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end test: control center -> llama-server (real binary) -> gateway.
 
-Usage: TORI_LLAMA_ROOT=<dir with cpu/bin/llama-server> live_test.py MODEL.gguf
+Usage: VICTOR_LLAMA_ROOT=<dir with cpu/bin/llama-server> live_test.py MODEL.gguf
 Needs no GPU. Proves the API/auth/streaming/capability plumbing with real inference
 on whatever backend is present (CPU here). It does NOT prove GPU acceleration.
 """
@@ -9,11 +9,11 @@ import http.client, json, os, shutil, subprocess, sys, tempfile, time
 
 model = os.path.abspath(sys.argv[1])
 tmp = tempfile.mkdtemp(prefix="toritest")
-env = dict(os.environ, HOME=tmp, TORI_DATA=os.path.join(tmp, "data"), TORI_RUN_DIR=os.path.join(tmp, "run"),
-           TORI_CC_PORT="18787", PYTHONUNBUFFERED="1")
-os.makedirs(env["TORI_DATA"] + "/models")
+env = dict(os.environ, HOME=tmp, VICTOR_DATA=os.path.join(tmp, "data"), VICTOR_RUN_DIR=os.path.join(tmp, "run"),
+           VICTOR_CC_PORT="18787", PYTHONUNBUFFERED="1")
+os.makedirs(env["VICTOR_DATA"] + "/models")
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "airootfs", "usr", "local")
-cc = subprocess.Popen([sys.executable, "-I", f"{root}/lib/tori/control_center.py"], env=env,
+cc = subprocess.Popen([sys.executable, "-I", f"{root}/lib/victorlinux/control_center.py"], env=env,
                       stdout=open(tmp + "/cc.out", "w"), stderr=subprocess.STDOUT)
 fails = []
 
@@ -44,12 +44,12 @@ try:
             call(18787, "GET", "/"); break
         except OSError:
             time.sleep(0.2)
-    tok = open(os.path.join(tmp, ".cache/tori/cc.token")).read()
-    T = {"X-Tori-Token": tok}
+    tok = open(os.path.join(tmp, ".cache/victor/cc.token")).read()
+    T = {"X-Victor-Token": tok}
     check("cc: API rejects missing token", call(18787, "GET", "/api/status")[0] == 401)
     check("cc: bad Host header rejected (DNS rebinding)", call(18787, "GET", "/", headers={"Host": "evil.example"})[0] == 403)
-    shutil.copy(model, env["TORI_DATA"] + "/models/")
-    mpath = env["TORI_DATA"] + "/models/" + os.path.basename(model)
+    shutil.copy(model, env["VICTOR_DATA"] + "/models/")
+    mpath = env["VICTOR_DATA"] + "/models/" + os.path.basename(model)
     s, st = call(18787, "GET", "/api/status", headers=T)
     check("cc: status ok", s == 200 and st["backend"]["selected"] == "cpu", str(st)[:300])
     check("cc: CPU fallback explained", "CPU" in st["backend"]["reason"] or "cpu" in st["backend"]["reason"].lower())
@@ -65,12 +65,12 @@ try:
     check("cc: start llm", r.get("ok") is True, str(r)[:500])
     for _ in range(180):          # slow (emulated) machines need a while to load the model and start the gateway
         try:
-            if call(8080, "GET", "/tori/health")[0] == 200:
+            if call(8080, "GET", "/victor/health")[0] == 200:
                 break
         except OSError:
             pass
         time.sleep(2)
-    s, h = call(8080, "GET", "/tori/health")
+    s, h = call(8080, "GET", "/victor/health")
     check("gw: health ok, loopback no auth required", s == 200 and h["auth_required"] is False, str(h))
     s, r = call(8080, "POST", "/v1/chat/completions", {"model": "x", "max_tokens": 8, "messages": [{"role": "user", "content": "Once upon a time"}]})
     check("gw: real local completion via gateway", s == 200 and r["choices"][0]["message"] is not None, str(r)[:300])
@@ -81,7 +81,7 @@ try:
     check("gw: SSE streaming passes through", raw.count("data:") >= 3 and "[DONE]" in raw, raw[:200])
     # Ollama-compatible and llama.cpp-native routes (real model)
     s_, v = call(8080, "GET", "/api/version"); check("gw: ollama /api/version", s_ == 200, str(v))
-    s_, tg = call(8080, "GET", "/api/tags"); check("gw: ollama /api/tags lists model", s_ == 200 and tg["models"][0]["name"] == "tori-local", str(tg))
+    s_, tg = call(8080, "GET", "/api/tags"); check("gw: ollama /api/tags lists model", s_ == 200 and tg["models"][0]["name"] == "victor-local", str(tg))
     s_, g = call(8080, "POST", "/api/generate", {"model": "x", "prompt": "Once upon a time", "stream": False, "options": {"num_predict": 8}})
     check("gw: ollama /api/generate (non-stream, real inference)", s_ == 200 and g.get("done") is True and isinstance(g.get("response"), str) and g.get("eval_count"), str(g)[:300])
     c = http.client.HTTPConnection("127.0.0.1", 8080, timeout=60)
@@ -93,7 +93,7 @@ try:
     s_, cm = call(8080, "POST", "/completion", {"prompt": "Once", "n_predict": 4, "stream": False})
     check("gw: llama.cpp native /completion", s_ == 200 and "content" in cm, str(cm)[:200])
     check("gw: unexposed path blocked", call(8080, "GET", "/api/anything", headers={})[0] == 404)
-    s, caps = call(8080, "GET", "/tori/capabilities")
+    s, caps = call(8080, "GET", "/victor/capabilities")
     check("caps: unverified before test", caps["tool_calling"] == "unverified" and caps["streaming"] == "unverified", str(caps))
     check("caps: never claims tool execution", caps["tool_execution_on_pc"] is False)
     # remote requires key
@@ -112,20 +112,20 @@ try:
     check("gw: wrong key -> 401", call(8080, "GET", "/v1/models", headers={"Authorization": "Bearer nope"})[0] == 401)
     s, r = call(8080, "GET", "/v1/models", headers={"Authorization": "Bearer " + key})
     check("gw: right key -> 200", s == 200, str(r)[:200])
-    check("gw: health open but minimal", call(8080, "GET", "/tori/health")[0] == 200)
-    sec = json.load(open(env["TORI_DATA"] + "/config/secrets.json"))
-    check("secrets: API key stored hashed, not plaintext", key not in json.dumps(sec) and oct(os.stat(env["TORI_DATA"] + "/config/secrets.json").st_mode)[-3:] == "600")
+    check("gw: health open but minimal", call(8080, "GET", "/victor/health")[0] == 200)
+    sec = json.load(open(env["VICTOR_DATA"] + "/config/secrets.json"))
+    check("secrets: API key stored hashed, not plaintext", key not in json.dumps(sec) and oct(os.stat(env["VICTOR_DATA"] + "/config/secrets.json").st_mode)[-3:] == "600")
     # capability test (tiny model is expected NOT to pass tool calling)
-    out = subprocess.run([sys.executable, "-I", f"{root}/bin/tori-capcheck"], env=env, capture_output=True, text=True)
-    caps_file = json.load(open(env["TORI_DATA"] + "/server/capabilities.json"))
+    out = subprocess.run([sys.executable, "-I", f"{root}/bin/victor-capcheck"], env=env, capture_output=True, text=True)
+    caps_file = json.load(open(env["VICTOR_DATA"] + "/server/capabilities.json"))
     check("capcheck: streaming verified by real test", caps_file["streaming"] is True, out.stdout[-500:] + out.stderr[-300:])
     print("INFO tool_calling result for this model:", caps_file["tool_calling"])
-    s, caps = call(8080, "GET", "/tori/capabilities", headers={"Authorization": "Bearer " + key})
+    s, caps = call(8080, "GET", "/victor/capabilities", headers={"Authorization": "Bearer " + key})
     check("caps: reflects recorded test", caps["streaming"] == "verified" and caps["tool_calling"] in ("verified", "failed-or-unsupported"), str(caps))
     s, r = call(18787, "POST", "/api/remote/revoke", {}, T)
     time.sleep(2)
-    check("revoke: gateway back to loopback, no keys", call(8080, "GET", "/tori/health")[1].get("auth_required") is False)
-    check("revoke: old key dead on remote reenable", json.load(open(env["TORI_DATA"] + "/config/secrets.json"))["api_keys"] == [])
+    check("revoke: gateway back to loopback, no keys", call(8080, "GET", "/victor/health")[1].get("auth_required") is False)
+    check("revoke: old key dead on remote reenable", json.load(open(env["VICTOR_DATA"] + "/config/secrets.json"))["api_keys"] == [])
     s, d = call(18787, "GET", "/api/diagnostics", headers=T)
     check("diag: produced, no key leak", s == 200 and key not in d["text"] and "Selected backend" in d["text"])
     log = call(18787, "GET", "/api/logs?name=llama", headers=T)[1]["log"]

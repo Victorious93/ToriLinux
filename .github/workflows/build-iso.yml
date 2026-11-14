@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "amd (Vulkan, default) | cuda | rocm (amd + experimental HIP)"
+        description: "amd (Vulkan) | universal/cuda (adds NVIDIA) | rocm (experimental HIP)"
         default: amd
         type: choice
-        options: [amd, cuda, rocm]
+        options: [amd, universal, cuda, rocm]
       type:
         description: "headless | gui | empty"
         default: gui
@@ -44,7 +44,7 @@ jobs:
 
       - name: Build ISO
         env:
-          WORKDIR: /var/tmp/tori-work
+          WORKDIR: /var/tmp/victor-work
         run: |
           args="${{ inputs.platform }} ${{ inputs.type }}"
           if [ -n "${{ inputs.packs }}" ]; then args="$args --packs ${{ inputs.packs }}"; fi
@@ -56,7 +56,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: torilinux-${{ inputs.platform }}-${{ inputs.type }}
+          name: victorlinux-${{ inputs.platform }}-${{ inputs.type }}
           path: |
             out/*.iso
             out/*.sha256

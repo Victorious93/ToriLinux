@@ -1,0 +1,4 @@
+xsetroot -solid "#0b1018" &
+tint2 &
+# Control Center is local-only; it does not load a model until you press Start.
+( sleep 2; victor-open ) &
