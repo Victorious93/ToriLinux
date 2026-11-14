@@ -22,6 +22,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import toricommon as tc  # noqa: E402
 
+OLLAMA_ROUTES = ("/api/version", "/api/tags", "/api/generate", "/api/chat")
 ALLOWED_PREFIXES = ("/v1/", "/completion", "/completions", "/chat/completions", "/models", "/props",
                     "/tokenize", "/detokenize", "/slots", "/health", "/metrics")
 # llama.cpp web UI static assets are served for GET / only when the UI is enabled
@@ -40,6 +41,8 @@ def capabilities(model_path=None):
     caps = {
         "openai_compatible": True,
         "endpoints": ["/v1/models", "/v1/chat/completions", "/v1/completions", "/v1/embeddings (if model supports it)"],
+        "ollama_compat": ["/api/version", "/api/tags", "/api/generate", "/api/chat"],
+        "llamacpp_native": ["/completion", "/props", "/tokenize", "/detokenize"],
         "streaming": "unverified", "tool_calling": "unverified",
         "tool_execution_on_pc": False,
         "note": "Remote inference does not grant permission to execute tools on this PC. "
@@ -108,9 +111,136 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, capabilities(self.cfg.get("model_path")))
         if path.startswith("/tori/"):
             return self._json(404, {"error": {"message": "unknown tori endpoint"}})
+        if path in OLLAMA_ROUTES:
+            return self._ollama(path)
         if path != "/" and not path.startswith(ALLOWED_PREFIXES):
             return self._json(404, {"error": {"message": "path not exposed by gateway"}})
         self._proxy()
+
+    # ---- Ollama-compatible subset (so Ollama-only clients can use this PC) -------------------------
+    # Translated onto llama-server. Deliberately NOT forwarded: tools/functions, images, model pull/push/delete/create.
+    def _read_json(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > self.cfg["max_body"]:
+            raise ValueError("request body too large")
+        try:
+            return json.loads(self.rfile.read(n) or b"{}") if n else {}
+        except ValueError:
+            raise ValueError("invalid JSON body")
+
+    def _up(self, method, path, body=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.cfg["upstream_port"], timeout=600)
+        c.request(method, path, body=None if body is None else json.dumps(body).encode(),
+                  headers={"Authorization": "Bearer " + self.cfg["upstream_key"], "Content-Type": "application/json"})
+        return c, c.getresponse()
+
+    def _ndjson_start(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+    def _ndjson(self, obj):
+        b = (json.dumps(obj) + "\n").encode()
+        self.wfile.write(b"%x\r\n%s\r\n" % (len(b), b))
+        self.wfile.flush()
+
+    def _sse_events(self, r):
+        buf = b""
+        while True:
+            chunk = r.read1(8192) if hasattr(r, "read1") else r.read(8192)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                line = line.strip()
+                if line.startswith(b"data:"):
+                    data = line[5:].strip()
+                    if data and data != b"[DONE]":
+                        try:
+                            yield json.loads(data)
+                        except ValueError:
+                            pass
+
+    def _ollama(self, path):
+        model = self.cfg.get("model_path")
+        name = os.path.basename(model) if model else "tori-local"
+        with State.lock:
+            State.last_request = time.time()
+        if path == "/api/version":
+            return self._json(200, {"version": "tori-compat (not Ollama)"})
+        if path == "/api/tags":
+            size = os.path.getsize(model) if model and os.path.exists(model) else 0
+            return self._json(200, {"models": [{"name": "tori-local", "model": "tori-local", "size": size,
+                                                "details": {"family": "llama.cpp", "format": "gguf", "file": name}}]})
+        if self.command != "POST":
+            return self._json(405, {"error": "use POST"})
+        try:
+            b = self._read_json()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        stream = bool(b.get("stream", True))          # Ollama's default is streaming
+        opts = b.get("options") or {}
+        mdl = b.get("model") or "tori-local"
+        try:
+            if path == "/api/generate":
+                up = {"prompt": str(b.get("prompt", "")), "stream": stream}
+                if "num_predict" in opts: up["n_predict"] = int(opts["num_predict"])
+                for k_o, k_u in (("temperature", "temperature"), ("top_p", "top_p"), ("top_k", "top_k"), ("seed", "seed")):
+                    if k_o in opts: up[k_u] = opts[k_o]
+                c, r = self._up("POST", "/completion", up)
+            else:
+                up = {"messages": b.get("messages") or [], "stream": stream}
+                if "num_predict" in opts: up["max_tokens"] = int(opts["num_predict"])
+                if "temperature" in opts: up["temperature"] = opts["temperature"]
+                c, r = self._up("POST", "/v1/chat/completions", up)   # 'tools' intentionally dropped
+        except (OSError, ValueError, TypeError):
+            return self._json(503, {"error": "No model is loaded. Start the inference server from the Tori Control Center."})
+        if r.status != 200:
+            err = r.read()[:500].decode("utf-8", "replace")
+            c.close()
+            return self._json(r.status if r.status < 500 else 502, {"error": f"upstream {r.status}: {err}"})
+        ts = lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())  # noqa: E731
+        gen = path == "/api/generate"
+        try:
+            if not stream:
+                d = json.loads(r.read())
+                if gen:
+                    out = {"model": mdl, "created_at": ts(), "response": d.get("content", ""), "done": True,
+                           "prompt_eval_count": d.get("tokens_evaluated"), "eval_count": d.get("tokens_predicted")}
+                else:
+                    u = d.get("usage") or {}
+                    out = {"model": mdl, "created_at": ts(), "done": True,
+                           "message": {"role": "assistant", "content": d["choices"][0]["message"].get("content") or ""},
+                           "prompt_eval_count": u.get("prompt_tokens"), "eval_count": u.get("completion_tokens")}
+                return self._json(200, out)
+            self._ndjson_start()
+            last = {}
+            for ev in self._sse_events(r):
+                if gen:
+                    last = ev
+                    self._ndjson({"model": mdl, "created_at": ts(), "response": ev.get("content", ""), "done": False})
+                else:
+                    ch = (ev.get("choices") or [{}])[0]
+                    txt = (ch.get("delta") or {}).get("content") or ""
+                    if ev.get("usage"): last = ev["usage"]
+                    if txt:
+                        self._ndjson({"model": mdl, "created_at": ts(), "message": {"role": "assistant", "content": txt}, "done": False})
+            fin = {"model": mdl, "created_at": ts(), "done": True, "done_reason": "stop"}
+            if gen:
+                fin.update(response="", prompt_eval_count=last.get("tokens_evaluated"), eval_count=last.get("tokens_predicted"))
+            else:
+                fin.update(message={"role": "assistant", "content": ""}, prompt_eval_count=last.get("prompt_tokens"),
+                           eval_count=last.get("completion_tokens"))
+            self._ndjson(fin)
+            self.wfile.write(b"0\r\n\r\n")
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            c.close()
 
     def _upstream_ok(self):
         try:

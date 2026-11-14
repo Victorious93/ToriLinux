@@ -35,12 +35,16 @@ systemctl enable nvidia-pstated.service
 # llama.cpp backends (root, build time)
 for script in "$CUSTOMIZE_AIROOTFS"/root-scripts/*.sh; do
   echo "===> Executing root script $script"
-  bash "$script"
+  # root's build must not write into the unprivileged user's home (ccache, caches)
+  HOME=/root CCACHE_DISABLE=1 bash "$script"
 done
 rm -rf /root/sources
+chown -R tori:tori /home/tori
 
 # optional packs (as the unprivileged user)
-su tori -c "pipx install transient-package" || true
+{% if platform == "cuda" and packs %}
+su tori -c "pipx install transient-package"
+{% endif %}
 cd /home/tori
 for script in "$CUSTOMIZE_AIROOTFS"/scripts/*.sh; do
   echo "===> Executing script $script"

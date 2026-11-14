@@ -23,4 +23,20 @@ if [ "$got" != "$want" ]; then
 fi
 echo "$got" > "$dest/llama.cpp.rev"
 rm -rf "$dest/llama.cpp/.git"
+
+# llama-server's embedded Web UI ("Open chat"). The llama.cpp build would otherwise download it from Hugging Face
+# at compile time, which fails in a sandboxed chroot and leaves the server without a UI. Pre-fetch + verify here.
+ui_base="https://huggingface.co/buckets/ggml-org/llama-ui/resolve/$tag"
+ui_tmp=$(mktemp -d)
+curl -fsSL -o "$ui_tmp/dist.tar.gz.sha256" "$ui_base/dist.tar.gz.sha256?download=true"
+curl -fsSL -o "$ui_tmp/dist.tar.gz" "$ui_base/dist.tar.gz?download=true"
+want_ui=$(awk '{print $1}' "$ui_tmp/dist.tar.gz.sha256")
+got_ui=$(sha256sum "$ui_tmp/dist.tar.gz" | awk '{print $1}')
+[ "$want_ui" = "$got_ui" ] || { echo "ERROR: llama UI bundle checksum mismatch" >&2; exit 1; }
+mkdir -p "$dest/llama.cpp/tools/ui/dist"
+tar -xzf "$ui_tmp/dist.tar.gz" -C "$dest/llama.cpp/tools/ui/dist"
+[ -f "$dest/llama.cpp/tools/ui/dist/index.html" ] || { echo "ERROR: UI bundle has no index.html" >&2; exit 1; }
+echo "$got_ui" > "$dest/llama.cpp.ui.sha256"
+rm -rf "$ui_tmp"
+echo "llama UI bundle $got_ui"
 echo "llama.cpp $tag = $got"

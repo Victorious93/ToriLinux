@@ -16,6 +16,10 @@ the **Tori gateway** (`gateway.py`):
 | `GET /tori/health` | `200 {"status":"ok"}` or `503 model_not_running`; no secrets |
 | `GET /tori/capabilities` | Honest capability report (below) |
 | `POST /v1/chat/completions`, `/v1/completions`, `GET /v1/models`, ... | OpenAI-compatible, proxied from llama.cpp, SSE streaming supported |
+| `GET /api/version`, `/api/tags`, `POST /api/generate`, `/api/chat` | **Ollama-compatible subset** for Ollama-only clients (streams NDJSON like Ollama). Translated onto llama-server; `tools` are dropped; no pull/push/create/delete. `/api/version` reports `tori-compat`, not a real Ollama version |
+| `POST /completion`, `GET /props`, `/tokenize`, `/detokenize` | llama.cpp native API, proxied unchanged |
+
+Clients may therefore speak **OpenAI, Ollama or llama.cpp** protocols to the same address and key.
 
 Only these inference paths are exposed. The gateway has no shell/file/tool-execution endpoints, and llama-server is
 started **without** `--tools` and with the MCP proxy disabled: remote inference never grants tool execution on the PC.

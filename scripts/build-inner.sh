@@ -60,6 +60,7 @@ m = {
   "git": {"commit": sh("git", "rev-parse", "HEAD"), "dirty": bool(sh("git", "status", "--porcelain")), "branch": sh("git", "rev-parse", "--abbrev-ref", "HEAD")},
   "pins": {s: dict(c.items(s)) for s in ("revisions", "build")},
   "llama_cpp_commit": rev,
+  "llama_ui_bundle_sha256": open("airootfs/root/sources/llama.cpp.ui.sha256").read().strip() if os.path.exists("airootfs/root/sources/llama.cpp.ui.sha256") else None,
   "gpu_stack_packages": gpu_stack, "package_count": len(pk),
   "build_env": {"archiso": pk.get("archiso") or sh("pacman", "-Q", "archiso"), "host_kernel": sh("uname", "-r"),
                 "host_pacman": sh("pacman", "-Q", "pacman"), "python": sh("python3", "--version")},
