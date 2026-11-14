@@ -1,0 +1,75 @@
+name: VictorLinux Debian ISO
+
+# Builds the Debian edition on infrastructure YOU control: GitHub-hosted ubuntu-24.04 by default, or your own
+# runner (set the `runner` input / repository variable VICTOR_RUNNER, e.g. "self-hosted"). No upstream secrets,
+# no original-maintainer runner. Hosted-runner limits: 4 vCPU / 16 GB RAM / ~14 GB root disk (we build on /mnt),
+# 6 h job limit; expect roughly 45-90 min. GPU inference tests CANNOT run on hosted runners (no GPU).
+on:
+  workflow_dispatch:
+    inputs:
+      runner: { description: "runs-on label", default: "ubuntu-24.04", type: string }
+      profile: { description: "amd (default) or nvidia", default: "amd", type: choice, options: [amd, nvidia] }
+  pull_request:
+    paths: ["debian-edition/**", ".github/workflows/debian-iso.yml"]
+  push:
+    branches: [main]
+    paths: ["debian-edition/**", ".github/workflows/debian-iso.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static checks and unit tests
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          cd debian-edition
+          python3 -I -m compileall -q config scripts tests
+          for f in build.sh scripts/*.sh tests/*.sh config/hooks/live/*.chroot; do bash -n "$f"; done
+          shellcheck -S error build.sh scripts/*.sh config/hooks/live/*.chroot
+          python3 -I -m unittest discover -s tests -p 'test_*.py' -v
+
+  iso:
+    needs: checks
+    runs-on: ${{ inputs.runner || vars.VICTOR_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space (hosted runners)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h / /mnt
+      - name: Install pinned Debian live-build toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq debootstrap xorriso squashfs-tools mtools dosfstools git curl ca-certificates
+          cd "$(mktemp -d)"
+          base=https://deb.debian.org/debian/pool/main
+          curl -fsSLO $base/l/live-build/live-build_20250505+deb13u1_all.deb
+          curl -fsSLO $base/d/debootstrap/debootstrap_1.0.145_all.deb
+          curl -fsSLO $base/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
+          sha256sum -c <<'SUMS'
+          58e09779881cbcc631c49ceb703413e0247a87db01823e597b2a1c40a2afd8f4  live-build_20250505+deb13u1_all.deb
+          2f044d9eac26e91bdee55e2d5907216c62c094ef21a88b4482cfa154b3c70c03  debootstrap_1.0.145_all.deb
+          9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac  debian-archive-keyring_2025.1_all.deb
+          SUMS
+          sudo apt-get install -y ./*.deb
+          lb --version
+      - name: Build ISO
+        run: sudo ./debian-edition/build.sh --profile "${{ inputs.profile || 'amd' }}" --workdir /mnt/victor-build --out "$PWD/out/debian"
+      - name: Verify ISO (static)
+        run: sudo ./debian-edition/scripts/verify-iso.sh "$(ls out/debian/*.iso | head -1)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: victorlinux-debian-${{ inputs.profile || 'amd' }}
+          path: |
+            out/debian/*.iso
+            out/debian/*.sha256
+            out/debian/*.manifest.json
+            out/debian/build-*.log
+          retention-days: 14
+          if-no-files-found: error

@@ -1,0 +1,81 @@
+#!/bin/bash
+# System configuration. Runs in the chroot after packages and includes are in place.
+set -Eeuo pipefail
+. /usr/share/victorlinux/versions.env
+
+# --- owner user: created here so live-config never applies its shared default password ("live").
+# Password is LOCKED; the first-run wizard sets the owner's own credentials.
+getent group victor-admin >/dev/null || groupadd -r victor-admin
+id victor >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash -c "VictorLinux owner" victor
+passwd -l victor >/dev/null
+# NOTE: deliberately NOT in group "sudo". Privileged actions go through /usr/local/lib/victorlinux/victor-priv.
+install -d -m 0750 -o victor -g victor /home/victor
+echo "victorlinux" > /etc/hostname
+cat > /etc/hosts <<'H'
+127.0.0.1 localhost
+127.0.1.1 victorlinux
+::1 localhost ip6-localhost ip6-loopback
+H
+
+# --- lightdm autologin (live-config's lightdm step also edits lightdm.conf; ours is explicit and authoritative)
+install -d /etc/lightdm/lightdm.conf.d
+cat > /etc/lightdm/lightdm.conf.d/50-victorlinux.conf <<'C'
+[Seat:*]
+autologin-user=victor
+autologin-user-timeout=0
+user-session=xfce
+C
+
+# --- services: nothing AI-related starts at boot; SSH off until configured by the owner
+systemctl disable ssh.service ssh.socket 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer fstrim.timer 2>/dev/null || true
+systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
+systemctl enable nftables.service victor-storage.service victor-access.service 2>/dev/null || true
+# AI services are enabled only on demand by the control center; make sure none is wanted at boot.
+rm -f /etc/systemd/system/*.wants/victor-llama.service
+
+# --- wireshark/tcpdump: file capabilities, group-restricted (no root GUI)
+echo "wireshark-common wireshark-common/install-setuid boolean true" | debconf-set-selections
+dpkg-reconfigure -f noninteractive wireshark-common
+getent group wireshark >/dev/null || { echo "wireshark group missing" >&2; exit 1; }
+# group membership AFTER packages/reconfigure so every group exists; required ones must succeed
+for g in audio video render plugdev netdev users dialout cdrom wireshark victor-admin; do
+  getent group "$g" >/dev/null || { echo "required group $g missing" >&2; exit 1; }
+  usermod -aG "$g" victor
+done
+getent group adbusers >/dev/null && usermod -aG adbusers victor || true
+id victor | grep -q wireshark || { echo "victor not in wireshark" >&2; exit 1; }
+# adb: udev rules ship with android-sdk-platform-tools-common (group plugdev/adbusers)
+
+# --- sudoers: only the narrow helper is passwordless; everything else needs the owner password
+chmod 0440 /etc/sudoers.d/victor-priv
+visudo -cf /etc/sudoers.d/victor-priv
+
+# --- permissions of shipped tools
+chmod 0755 /usr/local/bin/victor-* /usr/local/lib/victorlinux/* 2>/dev/null || true
+chmod 0750 /usr/local/lib/victorlinux/victor-priv
+
+# --- bounded logs (flash-friendly): journald in RAM, capped
+# directories created here, never assumed: git does not track empty dirs, so a clean checkout lacks them
+install -d /etc/systemd/journald.conf.d /etc/sysctl.d /usr/share/victorlinux
+cat > /etc/systemd/journald.conf.d/victor.conf <<'J'
+[Journal]
+Storage=volatile
+RuntimeMaxUse=64M
+J
+# --- sysctl: no core dumps
+echo "kernel.core_pattern=|/bin/false" > /etc/sysctl.d/90-victor-nocore.conf
+
+# --- image identity (no machine-id baked in; regenerated each boot by systemd)
+: > /etc/machine-id
+rm -f /var/lib/dbus/machine-id /etc/ssh/ssh_host_*
+
+# record kernel/firmware/driver facts for the manifest
+{
+  echo "kernel_package=$(dpkg-query -W -f='${Package} ${Version}' linux-image-amd64)"
+  ls /lib/modules | sed 's/^/kernel_modules_dir=/'
+  for p in firmware-amd-graphics firmware-linux-free firmware-misc-nonfree mesa-vulkan-drivers libvulkan1 podman live-boot live-config xfce4 nmap wireshark tcpdump adb fastboot git; do
+    echo "pkg_${p}=$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null || echo absent)"
+  done
+} > /usr/share/victorlinux/image-facts
+dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' > /usr/share/victorlinux/packages.tsv

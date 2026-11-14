@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""VictorLinux Control Center (Tk). Thin GUI: every action is a `victor-ctl` call, so everything is scriptable."""
+import json, os, subprocess, sys, threading, tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+
+CTL = "/usr/local/bin/victor-ctl"
+
+
+def ctl(*args, timeout=600):
+    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout)
+    if p.returncode != 0:
+        raise RuntimeError(p.stderr.strip() or p.stdout.strip() or f"exit {p.returncode}")
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        return p.stdout.strip()
+
+
+PALETTES = {
+    "dark": {"bg": "#1b1e26", "panel": "#252a35", "fg": "#d8dee9", "accent": "#5e81ac", "entry": "#2e3440", "sel": "#434c5e"},
+    "light": {"bg": "#f5f6f8", "panel": "#e6e8ec", "fg": "#2e3440", "accent": "#5e81ac", "entry": "#ffffff", "sel": "#cfd6e4"},
+}
+
+
+def current_theme():
+    try:
+        return subprocess.run(["/usr/local/bin/victor-theme", "status"], capture_output=True, text=True, timeout=5).stdout.strip() or "dark"
+    except Exception:
+        return "dark"
+
+
+class App(tk.Tk):
+    def apply_theme(self, mode):
+        P = PALETTES[mode]; self.mode = mode
+        st = ttk.Style(self); st.theme_use("clam")
+        st.configure(".", background=P["bg"], foreground=P["fg"], fieldbackground=P["entry"], bordercolor=P["panel"], lightcolor=P["panel"], darkcolor=P["panel"])
+        st.configure("TFrame", background=P["bg"]); st.configure("TLabel", background=P["bg"], foreground=P["fg"])
+        st.configure("TLabelframe", background=P["bg"], foreground=P["fg"]); st.configure("TLabelframe.Label", background=P["bg"], foreground=P["fg"])
+        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=5); st.map("TButton", background=[("active", P["sel"])])
+        st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"]); st.map("TCheckbutton", background=[("active", P["bg"])])
+        st.configure("TEntry", fieldbackground=P["entry"], foreground=P["fg"], insertcolor=P["fg"])
+        st.configure("TNotebook", background=P["bg"]); st.configure("TNotebook.Tab", background=P["panel"], foreground=P["fg"], padding=(10, 4))
+        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", "#ffffff")])
+        self.configure(bg=P["bg"])
+        self.option_add("*Listbox.background", P["entry"]); self.option_add("*Listbox.foreground", P["fg"])
+        self.option_add("*Listbox.selectBackground", P["accent"]); self.option_add("*Text.background", P["entry"]); self.option_add("*Text.foreground", P["fg"])
+        for w in getattr(self, "_themed", []):
+            try:
+                w.configure(bg=P["entry"], fg=P["fg"], insertbackground=P["fg"])
+                if isinstance(w, tk.Listbox): w.configure(selectbackground=P["accent"])
+            except tk.TclError:
+                pass
+
+    def toggle_theme(self):
+        new = "light" if self.mode == "dark" else "dark"
+        self.bg(lambda: subprocess.run(["/usr/local/bin/victor-theme", new], capture_output=True, text=True).stdout, lambda r: self.apply_theme(new))
+
+    def __init__(self):
+        super().__init__()
+        self._themed = []
+        self.apply_theme(current_theme() if current_theme() in PALETTES else "dark")
+        self.title("VictorLinux Control Center")
+        self.geometry("860x600")
+        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=6, pady=6)
+        self.status_var = tk.StringVar(value="starting...")
+        ttk.Label(self, textvariable=self.status_var, anchor="w", relief="sunken").pack(fill="x", side="bottom")
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_storage(); self.tab_diag()
+        self.after(500, self.refresh)
+
+    # ---- helpers
+    def bg(self, fn, done=None, busy="working..."):
+        self.status_var.set(busy)
+        def w():
+            try:
+                r = fn(); err = None
+            except Exception as e:  # noqa
+                r, err = None, str(e)
+            self.after(0, lambda: self._done(r, err, done))
+        threading.Thread(target=w, daemon=True).start()
+
+    def _done(self, r, err, done):
+        if err:
+            self.status_var.set("error"); messagebox.showerror("VictorLinux", err)
+        else:
+            self.status_var.set("ok")
+            if done:
+                done(r)
+
+    def out(self, widget, text):
+        widget.configure(state="normal"); widget.delete("1.0", "end"); widget.insert("end", text); widget.configure(state="disabled")
+
+    def mkout(self, parent):
+        t = scrolledtext.ScrolledText(parent, height=12, state="disabled", font="TkFixedFont"); t.pack(fill="both", expand=True, pady=4)
+        self._themed.append(t); self.apply_theme(self.mode)
+        return t
+
+    # ---- Status
+    def tab_status(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Status")
+        self.st_text = self.mkout(f)
+        b = ttk.Frame(f); b.pack(fill="x")
+        for label, fn in (("Start inference", self.start), ("Stop inference", lambda: self.bg(lambda: ctl("llama", "stop"), lambda r: self.refresh())),
+                          ("Open local chat", self.open_chat), ("Terminal", lambda: subprocess.Popen(["xfce4-terminal"])),
+                          ("Refresh", self.refresh)):
+            ttk.Button(b, text=label, command=fn).pack(side="left", padx=3)
+        ttk.Label(f, text="Image generation: optional pack, not installed in this image (see docs/PACKS.md).").pack(anchor="w", pady=4)
+
+    def start(self):
+        def done(r):
+            msg = ""
+            if r["backend"]["accelerated"]:
+                msg = f"GPU backend: {r['backend']['reason']}"
+            else:
+                msg = f"CPU FALLBACK: {r['backend']['reason']}"
+            if r["warnings"]:
+                msg += "\n" + "\n".join(r["warnings"])
+            messagebox.showinfo("Inference started", msg); self.refresh()
+        self.bg(lambda: ctl("llama", "start"), done, "loading model...")
+
+    def open_chat(self):
+        subprocess.Popen(["/usr/local/bin/victor-chat"])
+
+    def refresh(self):
+        def get():
+            return {"hw": ctl("hw", "snapshot", timeout=90), "st": ctl("storage", "status"), "ll": ctl("llama", "status")}
+        def done(d):
+            hw, st, ll = d["hw"], d["st"], d["ll"]
+            lines = [f"Storage : {st.get('state')} - {st.get('message')}"]
+            u = st.get("usage")
+            if u:
+                lines.append(f"          {u['free']/2**30:.1f} GiB free of {u['total']/2**30:.1f} GiB at {u['root']}")
+            ram = hw["ram"]; lines.append(f"RAM     : {ram['available']/2**30:.1f} GiB available / {ram['total']/2**30:.1f} GiB")
+            for v in hw["sysfs_vram"]:
+                lines.append(f"VRAM    : {v['vram_used']/2**30:.1f} / {v['vram_total']/2**30:.1f} GiB used ({v['card']}, busy {v['gpu_busy_percent']}%)")
+            for g in hw["pci_gpus"]:
+                lines.append(f"GPU     : {g['desc']}  [driver: {g['driver']}]")
+            for dv in hw["llama_devices"]["devices"]:
+                lines.append(f"llama.cpp device: {dv['id']} {dv['name']} ({dv['total_mib']} MiB, {dv['free_mib']} free)")
+            perms = hw["permissions"]
+            lines.append("Render nodes: " + (", ".join(f"{n['path']} rw={n['user_can_rw']}" for n in perms["render_nodes"]) or "NONE (no /dev/dri; GPU unusable)"))
+            rt = ll.get("runtime")
+            lines.append(f"Service : {'RUNNING' if ll['running'] else 'stopped'}" + (f" - model {rt['model']} on {rt['backend']['backend']} ({rt['backend']['reason']})" if ll["running"] and rt else ""))
+            self.out(self.st_text, "\n".join(lines))
+        self.bg(get, done, "refreshing...")
+
+    # ---- Models
+    def tab_models(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Models")
+        self.model_list = tk.Listbox(f, height=7); self.model_list.pack(fill="x"); self._themed.append(self.model_list)
+        row = ttk.Frame(f); row.pack(fill="x", pady=4)
+        ttk.Button(row, text="Import .gguf...", command=self.import_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Select for inference", command=self.select_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Remove", command=self.remove_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Reload list", command=self.load_models).pack(side="left", padx=3)
+        ttk.Label(f, text="Optional SHA-256 to verify:").pack(anchor="w"); self.sha = ttk.Entry(f); self.sha.pack(fill="x")
+        s = ttk.LabelFrame(f, text="Inference settings", padding=6); s.pack(fill="x", pady=6)
+        self.vars = {k: tk.StringVar() for k in ("backend", "ctx", "mem_limit_gb", "sleep_idle_minutes")}
+        self.jinja = tk.BooleanVar()
+        for i, (k, lab) in enumerate((("backend", "Backend (auto/vulkan/cpu)"), ("ctx", "Context length"),
+                                       ("mem_limit_gb", "RAM limit GiB (0=auto)"), ("sleep_idle_minutes", "Unload when idle (min)"))):
+            ttk.Label(s, text=lab).grid(row=i, column=0, sticky="w"); ttk.Entry(s, textvariable=self.vars[k]).grid(row=i, column=1, sticky="ew")
+        ttk.Checkbutton(s, text="Chat template / tool-call formatting (--jinja)", variable=self.jinja).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Button(s, text="Apply (restart service to take effect)", command=self.apply_cfg).grid(row=5, column=0, columnspan=2, pady=4)
+        self.models_msg = tk.StringVar(); ttk.Label(f, textvariable=self.models_msg, wraplength=800).pack(anchor="w")
+        self.after(800, self.load_models)
+
+    def load_models(self):
+        def done(d):
+            self.model_list.delete(0, "end")
+            for m in d["models"]:
+                self.model_list.insert("end", f"{m['name']}   ({m['size']/2**30:.2f} GiB)")
+            self._models = d["models"]
+            for k in self.vars: self.vars[k].set(str(d["cfg"][k]))
+            self.jinja.set(bool(d["cfg"]["jinja"])); self.models_msg.set(f"selected: {d['cfg']['model'] or '(none)'}")
+        self.bg(lambda: {"models": ctl("model", "list"), "cfg": ctl("llama", "config")}, done)
+
+    def _sel(self):
+        i = self.model_list.curselection()
+        if not i: raise RuntimeError("Select a model in the list first.")
+        return self._models[i[0]]["name"]
+
+    def import_model(self):
+        p = filedialog.askopenfilename(title="Choose a GGUF model (USB drives appear under /media)", initialdir="/media" if os.path.isdir("/media") else "/",
+                                        filetypes=[("GGUF models", "*.gguf")])
+        if not p: return
+        args = ["model", "import", p] + (["--sha256", self.sha.get().strip()] if self.sha.get().strip() else [])
+        def done(r):
+            messagebox.showinfo("Imported", f"{r['imported_to']}\nchecksum verified: {r['checksum_verified']}\nestimated memory: {r['estimate']['estimated_total']/2**30:.1f} GiB ({r['estimate']['note']})")
+            self.load_models()
+        self.bg(lambda: ctl(*args), done, "copying + validating...")
+
+    def select_model(self):
+        n = self._sel(); self.bg(lambda: ctl("model", "select", n), lambda r: self.load_models())
+
+    def remove_model(self):
+        n = self._sel()
+        if messagebox.askyesno("Remove", f"Delete {n} from the data partition?"):
+            self.bg(lambda: ctl("model", "remove", n), lambda r: self.load_models())
+
+    def apply_cfg(self):
+        sets = [f"{k}={v.get()}" for k, v in self.vars.items()] + [f"jinja={'1' if self.jinja.get() else '0'}"]
+        self.bg(lambda: ctl("llama", "config", "--set", *sets), lambda r: self.models_msg.set("settings saved"))
+
+    # ---- Remote
+    def tab_remote(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Remote access")
+        ttk.Label(f, wraplength=800, text="Default: the API listens on 127.0.0.1 only. To let DroidCommand-AI (or another client) connect, choose the "
+                  "exact LAN/VPN address, keep TLS on, and restart the service. A key is always required for remote clients.").pack(anchor="w")
+        self.rbind = tk.StringVar(value="127.0.0.1"); ttk.Label(f, text="Listen address").pack(anchor="w"); ttk.Entry(f, textvariable=self.rbind).pack(fill="x")
+        self.rtls = tk.BooleanVar(value=True); ttk.Checkbutton(f, text="HTTPS (self-signed, pinned certificate)", variable=self.rtls).pack(anchor="w")
+        self.rvpn = tk.BooleanVar(); ttk.Checkbutton(f, text="Allow plain HTTP ONLY because traffic is inside a private VPN (Tailscale/WireGuard)", variable=self.rvpn).pack(anchor="w")
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        for t, fn in (("Enable remote", self.remote_on), ("Disable (loopback)", self.remote_off), ("Show connection details", lambda: self.conn(False)),
+                      ("Reveal key", self.reveal), ("Rotate key", self.rotate), ("Revoke ALL remote access", self.revoke), ("Self-test API", self.selftest)):
+            ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        self.remote_out = self.mkout(f)
+
+    def remote_on(self):
+        ip = self.rbind.get().strip()
+        sets = [f"bind={ip}", "remote.enabled=1", f"remote.tls={'1' if self.rtls.get() else '0'}", f"remote.vpn_plain_http_ack={'1' if self.rvpn.get() else '0'}"]
+        self.bg(lambda: ctl("llama", "config", "--set", *sets), lambda r: (self.out(self.remote_out, "Remote access enabled. Restart the service to apply."),))
+
+    def remote_off(self):
+        self.bg(lambda: ctl("llama", "config", "--set", "remote.enabled=0", "bind=127.0.0.1"), lambda r: self.out(self.remote_out, "Back to loopback only. Restart the service."))
+
+    def conn(self, reveal):
+        self.bg(lambda: ctl("api", "connection", *(["--reveal-key"] if reveal else [])), lambda r: self.out(self.remote_out, json.dumps(r, indent=2)))
+
+    def reveal(self):
+        if messagebox.askyesno("Reveal key", "Show the API key on screen?"): self.conn(True)
+
+    def rotate(self):
+        self.bg(lambda: ctl("api", "rotate-key"), lambda r: self.out(self.remote_out, r))
+
+    def revoke(self):
+        self.bg(lambda: subprocess.run(["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv", "revoke"], capture_output=True, text=True).stdout,
+                lambda r: self.out(self.remote_out, r))
+
+    def selftest(self):
+        self.bg(lambda: ctl("api", "selftest", timeout=900), lambda r: self.out(self.remote_out, json.dumps(r, indent=2)), "testing endpoint...")
+
+    # ---- Kali
+    def tab_kali(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Kali (optional)")
+        ttk.Label(f, wraplength=800, text="Official Kali container (rootless Podman, pinned by digest, separate filesystem; Kali repositories are never added to this "
+                  "Debian host). It shares the host kernel and network drivers: it is not a separate OS, kernel or Wi-Fi stack. Nothing downloads unless you choose it.").pack(anchor="w")
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        for t, fn in (("Status", self.kali_status), ("Load offline pack...", self.kali_load), ("Download image (network)", self.kali_dl),
+                      ("Start", lambda: self.bg(lambda: ctl("kali", "start"), lambda r: self.out(self.kali_out, json.dumps(r, indent=2)))),
+                      ("Terminal", self.kali_term), ("Stop", lambda: self.bg(lambda: ctl("kali", "stop"), lambda r: self.kali_status()))):
+            ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        self.kali_out = self.mkout(f)
+
+    def kali_status(self):
+        self.bg(lambda: ctl("kali", "status"), lambda r: self.out(self.kali_out, json.dumps(r, indent=2)))
+
+    def kali_load(self):
+        p = filedialog.askopenfilename(title="Kali pack (.tar)", initialdir="/media", filetypes=[("Pack", "*.tar *.tar.gz")])
+        if p: self.bg(lambda: ctl("kali", "load-pack", p, timeout=1800), lambda r: self.kali_status())
+
+    def kali_dl(self):
+        if messagebox.askyesno("Download", "This downloads the Kali image from the internet. Continue?"):
+            self.bg(lambda: ctl("kali", "download", "--yes", timeout=3600), lambda r: self.kali_status(), "downloading...")
+
+    def kali_term(self):
+        subprocess.Popen(["xfce4-terminal", "-e", "podman exec -it victor-kali /bin/bash"])
+
+    # ---- Storage
+    def tab_storage(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Storage")
+        ttk.Label(f, wraplength=800, text="Persistent app data (models, chats, settings, images, Kali work, documents, bounded logs) lives on a VICTORDATA partition. "
+                  "The OS itself is NOT persistent. Pick one partition explicitly if several are attached.").pack(anchor="w")
+        self.cand = tk.Listbox(f, height=6); self.cand.pack(fill="x", pady=4); self._themed.append(self.cand)
+        b = ttk.Frame(f); b.pack(fill="x")
+        for t, fn in (("Rescan", self.scan), ("Use selected partition", self.use_sel), ("Temporary session (RAM only)", self.session)):
+            ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        self.stor_out = self.mkout(f); self.after(1200, self.scan)
+
+    def scan(self):
+        def done(s):
+            self._cands = s["candidates"]; self.cand.delete(0, "end")
+            for c in self._cands:
+                self.cand.insert("end", f"UUID {c['uuid']}  {c['size']/2**30:.1f} GiB  {c['model']} {c['serial']} ({c['transport']})")
+            self.out(self.stor_out, f"{s['state']}: {s['message']}")
+        self.bg(lambda: ctl("storage", "status"), done)
+
+    def use_sel(self):
+        i = self.cand.curselection()
+        if not i: return messagebox.showwarning("Storage", "Select a partition first.")
+        self.bg(lambda: ctl("storage", "select", self._cands[i[0]]["uuid"]), lambda r: self.scan())
+
+    def session(self):
+        if messagebox.askyesno("Temporary session", "Nothing will be saved. Continue?"):
+            self.bg(lambda: ctl("storage", "session"), lambda r: self.scan())
+
+    # ---- Diagnostics
+    def tab_diag(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
+        b = ttk.Frame(f); b.pack(fill="x")
+        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Dark / light theme", self.toggle_theme), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+            ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        self.diag_out = self.mkout(f)
+
+    def diag(self):
+        self.bg(lambda: ctl("diag", "show", timeout=180), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)), "collecting...")
+
+    def copy(self):
+        self.clipboard_clear(); self.clipboard_append(self.diag_out.get("1.0", "end")); self.status_var.set("copied (contains no keys or passwords)")
+
+    def benchmark(self):
+        self.bg(lambda: ctl("bench", "run", timeout=3700), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)), "benchmarking (stop the service first)...")
+
+    def versions(self):
+        self.bg(lambda: ctl("versions", "show", timeout=180), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)))
+
+
+if __name__ == "__main__":
+    App().mainloop()

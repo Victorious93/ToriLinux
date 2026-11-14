@@ -1,0 +1,12 @@
+# Runtime libraries for the llama.cpp build (build-only -dev packages are installed and purged by the hook).
+mesa-vulkan-drivers
+libvulkan1
+vulkan-tools
+libgomp1
+libssl3t64
+libstdc++6
+radeontop
+clinfo
+python3
+python3-venv
+python3-pip

@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=VictorLinux first-run setup
+Exec=/usr/local/bin/victor-firstrun
+X-GNOME-Autostart-enabled=true

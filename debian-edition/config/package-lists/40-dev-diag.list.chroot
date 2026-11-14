@@ -1,0 +1,9 @@
+git
+pipx
+gcc
+make
+adb
+fastboot
+nmap
+wireshark
+tcpdump

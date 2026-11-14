@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitorVirtual-1" type="empty"><property name="workspace0" type="empty">
+        <property name="color-style" type="int" value="0"/>
+        <property name="image-style" type="int" value="0"/>
+        <property name="color1" type="array"><value type="uint" value="6168"/><value type="uint" value="6425"/><value type="uint" value="7710"/><value type="uint" value="65535"/></property>
+      </property></property>
+      <property name="monitordefault" type="empty"><property name="workspace0" type="empty">
+        <property name="color-style" type="int" value="0"/>
+        <property name="image-style" type="int" value="0"/>
+        <property name="color1" type="array"><value type="uint" value="6168"/><value type="uint" value="6425"/><value type="uint" value="7710"/><value type="uint" value="65535"/></property>
+      </property></property>
+    </property>
+  </property>
+</channel>

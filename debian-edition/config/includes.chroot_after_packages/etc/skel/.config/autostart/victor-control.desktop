@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=VictorLinux Control Center
+Exec=/usr/local/bin/victor-control

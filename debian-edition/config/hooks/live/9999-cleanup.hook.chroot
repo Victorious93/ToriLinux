@@ -1,0 +1,11 @@
+#!/bin/bash
+# Remove build-only material and caches so nothing build-host-specific ships in the image.
+set -Eeuo pipefail
+rm -f /usr/share/victorlinux/build-env /usr/share/victorlinux/build-ca.crt
+rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /tmp/* /root/.cache /root/.gitconfig 2>/dev/null || true
+# generated, per-device identities must not exist in the image
+rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id
+: > /etc/machine-id
+# fail the build if any shared default credential slipped in
+if grep -qE '^victor:[^!*:]' /etc/shadow; then echo "victor has a usable password hash in the image" >&2; exit 1; fi
+[ ! -e /etc/sudoers.d/live ] || { echo "unexpected /etc/sudoers.d/live" >&2; exit 1; }

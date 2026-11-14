@@ -11,6 +11,12 @@ Arch Linux live image that boots from USB and runs local LLM inference, with fir
 > This fork: <https://github.com/Victorious93/ToriLinux> (report fork issues
 > [here](https://github.com/Victorious93/ToriLinux/issues/new)).
 
+> **VictorLinux (Debian edition)** lives in [`debian-edition/`](debian-edition/README.md): a Debian 13 "trixie" live-build
+> distribution (Xfce, dark theme, llama.cpp Vulkan/CPU, persistent `VICTORDATA` storage, authenticated OpenAI-compatible
+> endpoint, optional isolated Kali container). It is a separate implementation; this Arch edition is unchanged by it.
+> GUI **and** headless variants for both editions are planned ([roadmap](debian-edition/docs/ROADMAP.md)); Debian ships the GUI variant only for now.
+> Debian-edition modifications: **Victorious / Victorious Framework**; see [NOTICE](NOTICE).
+
 **Status honesty:** see [docs/test-report.md](docs/test-report.md) for exactly what has and has not been
 verified. GPU acceleration on physical AMD hardware has **not** been verified by the author of this change set
 unless that report says so.
