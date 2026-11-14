@@ -56,6 +56,8 @@ chmod 0755 /usr/local/bin/victor-* /usr/local/lib/victorlinux/* 2>/dev/null || t
 chmod 0750 /usr/local/lib/victorlinux/victor-priv
 
 # --- bounded logs (flash-friendly): journald in RAM, capped
+# directories created here, never assumed: git does not track empty dirs, so a clean checkout lacks them
+install -d /etc/systemd/journald.conf.d /etc/sysctl.d /usr/share/victorlinux
 cat > /etc/systemd/journald.conf.d/victor.conf <<'J'
 [Journal]
 Storage=volatile
