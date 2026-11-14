@@ -16,19 +16,25 @@ def ensure_cert(tls_dir, names):
     os.makedirs(tls_dir, mode=0o700, exist_ok=True)
     crt, key, san_f = (os.path.join(tls_dir, n) for n in ("coordinator.crt", "coordinator.key", "san.txt"))
     san = ",".join(sorted({("IP:" if n.replace(".", "").replace(":", "").isdigit() or ":" in n else "DNS:") + n for n in names} | {"DNS:localhost", "IP:127.0.0.1"}))
-    if not (os.path.exists(crt) and os.path.exists(key) and open(san_f).read() == san if os.path.exists(san_f) else False):
+    have = False
+    if os.path.exists(crt) and os.path.exists(key) and os.path.exists(san_f):
+        with open(san_f) as fh:
+            have = fh.read() == san
+    if not have:
         old_umask = os.umask(0o077)
         try:
             _openssl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", key, "-out", crt,
                      "-days", "825", "-subj", "/CN=victor-fleet-coordinator/O=Victorious Framework", "-addext", f"subjectAltName={san}")
-            open(san_f, "w").write(san)
+            with open(san_f, "w") as fh:
+                fh.write(san)
         finally:
             os.umask(old_umask)
     return crt, key
 
 
 def fingerprint(crt_path):
-    der = ssl.PEM_cert_to_DER_cert(open(crt_path).read())
+    with open(crt_path) as fh:
+        der = ssl.PEM_cert_to_DER_cert(fh.read())
     return hashlib.sha256(der).hexdigest()
 
 

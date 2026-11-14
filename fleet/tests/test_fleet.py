@@ -400,6 +400,37 @@ class TestArtifactsAndWorkflows(Base):
         self.assertFalse(body["results"][0]["ok"])
 
 
+class TestAdminSocket(Base):
+    """The owner CLI/GUI path: every verb goes through the private Unix socket, which the service-level tests do not touch."""
+    def call(self, method, path, body=None):
+        from victorfleet.cli import UnixConn
+        c = UnixConn(self.svc.sock_path)
+        c.request(method, path, json.dumps(body or {}) if method == "POST" else None, {"Content-Type": "application/json"})
+        r = c.getresponse(); return r.status, json.loads(r.read() or b"{}")
+
+    def test_full_owner_lifecycle_over_the_socket(self):
+        import stat
+        self.assertEqual(stat.S_IMODE(os.stat(self.svc.sock_path).st_mode), 0o600)
+        self.svc.coord.cfg["plan_approval"] = True
+        w = self.worker()
+        st, r = self.call("POST", "/plans", {"spec": {"jobs": [{"key": "a", "op": "hash_files"}, {"key": "b", "op": "hash_files", "deps": ["a"]}]}})
+        self.assertEqual(st, 200); pid = r["plan"]; self.assertEqual(r["review"]["state"], "proposed")
+        self.assertEqual(self.call("GET", f"/plans/{pid}/review")[0], 200)
+        self.assertEqual(self.call("POST", f"/plans/{pid}/approve")[0], 200)
+        self.assertEqual(self.call("POST", "/tick")[0], 200)
+        self.assertEqual(self.job(pid, "a")["state"], "assigned")
+        self.assertEqual(self.call("GET", f"/jobs?plan={pid}")[1][0]["plan_id"], pid)
+        self.assertEqual(self.call("POST", f"/jobs/{pid}.b/cancel")[1]["state"], "cancelled")
+        self.assertEqual(self.call("GET", f"/plans/{pid}/report")[0], 200)
+        for act in ("pause", "resume", "disable", "enable"):
+            self.assertEqual(self.call("POST", f"/devices/{w.device_id}/{act}")[0], 200)
+        self.assertEqual(self.call("POST", f"/plans/{pid}/cancel")[0], 200)
+        self.assertEqual(self.call("POST", f"/devices/{w.device_id}/revoke")[0], 200)
+        self.assertEqual(self.call("GET", "/status")[1]["devices"][0]["state"], "revoked")
+        self.assertEqual(self.call("GET", "/nope")[0], 400)
+        self.assertEqual(self.call("POST", "/plans", {"spec": {"jobs": []}})[0], 400)
+
+
 class TestPersistence(unittest.TestCase):
     def test_volatile_when_no_data_partition(self):
         d = tempfile.mkdtemp()

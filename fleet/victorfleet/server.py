@@ -357,7 +357,7 @@ class AdminHandler(Base):
         k = (method, parts[0] if parts else "")
         if k == ("GET", "status"): return s.status()
         if k == ("POST", "pair"): return s.pairing_payload(int(body.get("ttl_s", 600)), body.get("label"))
-        if k == ("POST", "plans"):
+        if k == ("POST", "plans") and len(parts) == 1:
             pid = c.submit_plan(body["spec"], body.get("title"), body.get("auto_approve")); return {"plan": pid, "review": c.plan_review(pid)}
         if k == ("GET", "plans") and len(parts) == 1:
             return [dict(r) | {"spec_json": None} for r in s.store.q("SELECT * FROM plans ORDER BY created_ms DESC LIMIT 100")]
