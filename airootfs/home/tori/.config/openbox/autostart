@@ -1,4 +1,0 @@
-feh --bg-scale ~/.local/share/tori/wallpapers/tori-aod.jpg &
-tint2 &
-# Control Center is local-only; it does not load a model until you press Start.
-( sleep 2; tori-open ) &

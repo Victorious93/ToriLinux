@@ -1,7 +1,7 @@
 # VictorLinux — Debian edition
 
 A Debian 13 ("trixie", stable) **custom live distribution** with optional Kali tooling, derived from the ToriLinux idea
-(upstream: [sasha0552/ToriLinux](https://github.com/sasha0552/ToriLinux), Arch-based, preserved unchanged in the repository root).
+(upstream: [sasha0552/ToriLinux](https://github.com/sasha0552/ToriLinux), Arch-based; its renamed VictorLinux edition lives in the repository root).
 Debian edition and fork modifications: **Victorious / Victorious Framework**. See `../NOTICE`.
 
 Goal: a portable, offline AI workstation on a USB drive — Xfce desktop, llama.cpp with a Vulkan GPU backend (AMD RX 6800 XT
@@ -15,9 +15,9 @@ and an optional isolated Kali container.
 | Area | Included |
 |---|---|
 | Base | Debian trixie, kernel `linux-image-amd64` (6.12 LTS series), `firmware-amd-graphics`, `-linux-free`, `-misc-nonfree`, `-realtek`, `-iwlwifi`, CPU microcode |
-| Desktop | Xorg, Xfce 4.20, LightDM autologin to the unprivileged `victor` user, Firefox ESR; **dark theme by default** (Adwaita-dark GTK, dark terminal/greeter/Control Center/chat UI) with a light/dark toggle (Control Center → Diagnostics, or `victor-theme dark|light|toggle`); the choice is stored per drive on VICTORDATA |
+| Desktop | Xorg, Xfce 4.20, LightDM autologin to the unprivileged `victor` user, Firefox ESR; **always dark** (Adwaita-dark GTK, terminal, greeter, rounded Control Center tabs and chat browser). `victor-theme apply` enforces dark at login and ignores older light preferences; `victor-theme status` reports `dark` |
 | Inference | llama.cpp (pinned commit, see `versions.env`): **Vulkan** (Mesa RADV) + **CPU** (all x86-64 variants, chosen at runtime), HTTPS support compiled in, built-in download disabled |
-| Control | `victor-control` (Tk GUI), `victor-ctl` (CLI behind it), `victor-priv` (single validated root helper), first-run wizard |
+| Control | `victor-control` (Tk GUI), `victor-ctl` (CLI behind it, including `hw recommend` for estimated model-fit advice), `victor-priv` (single validated root helper), first-run wizard |
 | Dev/diag | git, Python 3 (+venv, pipx, pip), gcc/make, ADB, Fastboot, Nmap, Wireshark, tcpdump |
 | Containers | rootless Podman for the **optional** Kali environment (no Kali repos on the host) |
 
@@ -44,4 +44,4 @@ Boot the drive, choose the ISO in Ventoy, log in is automatic; the first-run wiz
 Details: [docs/USB.md](docs/USB.md), [docs/PERSISTENCE.md](docs/PERSISTENCE.md).
 
 ## Documents
-[BUILD](docs/BUILD.md) · [USB](docs/USB.md) · [PERSISTENCE](docs/PERSISTENCE.md) · [GPU](docs/GPU.md) · [ENDPOINT / DroidCommand-AI](docs/ENDPOINT.md) · [KALI](docs/KALI.md) · [SECURITY](docs/SECURITY.md) · [PACKS & parity with Arch](docs/PACKS.md) · [ROADMAP](docs/ROADMAP.md) · [TEST REPORT](docs/TEST-REPORT.md)
+[BUILD](docs/BUILD.md) · [USB](docs/USB.md) · [PERSISTENCE](docs/PERSISTENCE.md) · [GPU](docs/GPU.md) · [ENDPOINT / DroidCommand-AI](docs/ENDPOINT.md) · [KALI](docs/KALI.md) · [SECURITY](docs/SECURITY.md) · [PACKS & parity with Arch](docs/PACKS.md) · [ROADMAP](docs/ROADMAP.md) · [CURRENT SOURCE TEST REPORT](../docs/2026-11-14-victorlinux-testing.md)

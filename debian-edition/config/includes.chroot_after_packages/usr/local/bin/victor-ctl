@@ -34,7 +34,7 @@ def main():
         return r
     st = g("storage", "status", "list", "select", "session", "check", "repair", "init")
     st["select"].add_argument("uuid")
-    hwp = g("hw", "snapshot", "backend")
+    hwp = g("hw", "snapshot", "backend", "recommend")
     mo = g("model", "list", "import", "inspect", "select", "remove")
     mo["import"].add_argument("src"); mo["import"].add_argument("--sha256"); mo["import"].add_argument("--move", action="store_true")
     mo["inspect"].add_argument("path"); mo["select"].add_argument("name"); mo["remove"].add_argument("name")
@@ -64,6 +64,15 @@ def main():
         elif a.grp == "hw":
             if a.cmd == "snapshot":
                 out(a, hw.snapshot())
+            elif a.cmd == "recommend":
+                import model_advisor
+                devices = hw.llama_devices()["devices"]
+                chosen = hw.select_backend("auto", devices, None)
+                gpu = next((d for d in devices if d["id"] == chosen.get("device")), None)
+                cards = [{"vram_total": gpu["total_mib"] * 2**20,
+                          "vram_used": max(0, gpu["total_mib"] - gpu["free_mib"]) * 2**20}] if gpu else []
+                backend = chosen["backend"] if os.path.exists(hw.LLAMA_SERVER) else None
+                out(a, model_advisor.report(hw.mem_info(), cards, backend, llama.load_config()["ctx"]))
             else:
                 c = llama.load_config(); d = hw.llama_devices()
                 out(a, hw.select_backend(c["backend"], d["devices"], None))

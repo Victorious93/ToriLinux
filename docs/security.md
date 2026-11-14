@@ -1,15 +1,15 @@
 # Access and security model
 
-* **No shared password.** `tori` and `root` are locked. The *physical console* auto-logs in `tori` (anyone with the
+* **No shared password.** `victor` and `root` are locked. The *physical console* auto-logs in `victor` (anyone with the
   USB and the PC is the owner by assumption). Nothing can log in over the network.
-* **SSH is off.** Enable it in the Control Center after pasting your **public key**; key-only, `AllowUsers tori`,
+* **SSH is off.** Enable it in the Control Center after pasting your **public key**; key-only, `AllowUsers victor`,
   `PermitRootLogin no`, listens only on the address you choose. Password SSH is not supported.
-* **Least privilege.** AI applications run as `tori`. sudo is limited to one validated helper,
-  `/usr/local/lib/tori/tori-priv` (mount storage, SSH key/enable/reset, reboot/poweroff). There is no `NOPASSWD: ALL`.
+* **Least privilege.** AI applications run as `victor`. sudo is limited to one validated helper,
+  `/usr/local/lib/victorlinux/victor-priv` (mount storage, SSH key/enable/reset, reboot/poweroff). There is no `NOPASSWD: ALL`.
 * **Network exposure.** Services bind to `127.0.0.1`; the inference gateway opens a LAN/VPN address only when you
   set it and have an API key. mDNS advertising is disabled.
 * **Reset / revoke.** Control Center: *Revoke all remote access* (API key + bind), *Remove all keys & disable* (SSH).
-  Rebooting the live image resets everything that is not on `TORIDATA`; delete `TORIDATA/tori/config/secrets.json`
+  Rebooting the live image resets everything that is not on `VICTORDATA`; delete `VICTORDATA/victorlinux/config/secrets.json`
   to drop stored keys.
 * **Local UI.** The Control Center listens on loopback only, requires a per-session token, and rejects foreign
   `Host` headers (DNS rebinding).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare a USB drive: Ventoy + the built ISO + a persistent ext4 data partition labelled TORIDATA.
+# Prepare a USB drive: Ventoy + the built ISO + a persistent ext4 data partition labelled VICTORDATA.
 #
 #   scripts/make-usb.sh list
 #   scripts/make-usb.sh plan  --iso out/X.iso --device /dev/sdX
@@ -7,8 +7,8 @@
 #
 # Layouts:
 #   raw     (default, verified for UEFI boot in QEMU) the hybrid ISO is written straight to the drive, then an ext4
-#           partition labelled TORIDATA is added in the free space. One OS per stick; UEFI + BIOS bootable.
-#   ventoy  Ventoy + ISO + TORIDATA. Multi-ISO, but in testing Ventoy booted this ISO in legacy BIOS mode only;
+#           partition labelled VICTORDATA is added in the free space. One OS per stick; UEFI + BIOS bootable.
+#   ventoy  Ventoy + ISO + VICTORDATA. Multi-ISO, but in testing Ventoy booted this ISO in legacy BIOS mode only;
 #           UEFI mode did NOT boot it in the emulator. Use only if you need Ventoy and have tested your hardware.
 #
 # SAFETY: the target is never chosen by capacity. `write` needs the exact device path AND its serial
@@ -30,7 +30,7 @@ need() { command -v "$1" >/dev/null || die "missing tool: $1"; }
 dev_field() {
   local v; v=$(lsblk -dno "$2" "$1" 2>/dev/null | head -n1 | sed 's/^ *//; s/ *$//')
   # test mode only: loop images have no serial, so use a fixed one
-  if [[ -z "$v" && "$2" == SERIAL && -n "${TORI_USB_TEST_LOOP:-}" ]]; then v=LOOPTEST; fi
+  if [[ -z "$v" && "$2" == SERIAL && -n "${VICTOR_USB_TEST_LOOP:-}" ]]; then v=LOOPTEST; fi
   echo "$v"
 }
 dev_bytes() { blockdev --getsize64 "$1"; }
@@ -44,7 +44,7 @@ backing_disks() {   # whole-disk devices underlying a path (resolves partitions 
 check_target() {
   local d=$1
   [[ -b "$d" ]] || die "$d is not a block device"
-  [[ "$(dev_field "$d" TYPE)" == "disk" || ( -n "${TORI_USB_TEST_LOOP:-}" && "$(dev_field "$d" TYPE)" == "loop" ) ]] \
+  [[ "$(dev_field "$d" TYPE)" == "disk" || ( -n "${VICTOR_USB_TEST_LOOP:-}" && "$(dev_field "$d" TYPE)" == "loop" ) ]] \
     || die "$d is not a whole disk (give the disk, e.g. /dev/sdb, not a partition)"
   local real; real=$(readlink -f "$d")
   local p
@@ -56,7 +56,7 @@ check_target() {
   if lsblk -nro MOUNTPOINTS "$d" | grep -q '[^[:space:]]'; then
     die "$d (or a partition) is mounted - unmount it first: $(lsblk -nro NAME,MOUNTPOINTS "$d" | tr '\n' ';')"
   fi
-  if [[ -z "${TORI_USB_TEST_LOOP:-}" ]]; then
+  if [[ -z "${VICTOR_USB_TEST_LOOP:-}" ]]; then
     [[ "$(dev_field "$d" TRAN)" == "usb" ]] || die "$d transport is '$(dev_field "$d" TRAN)', not usb (internal disk?) - refusing"
   fi
 }
@@ -123,7 +123,7 @@ Target : $d  model='$(dev_field "$d" MODEL)' serial='$(dev_field "$d" SERIAL)' s
 ISO    : $iso ($(stat -c %s "$iso") bytes)
 Layout (raw hybrid ISO, MBR):
   1  ISO9660 hybrid image + EFI system partition   (the ISO itself, $(( raw_data_start_s * 512 / 1048576 )) MiB)
-  3  ext4 'TORIDATA'  $(( raw_data_len_s * 512 / 1073741824 )) GiB  persistent: models, chats, settings, images, outputs, documents, logs
+  3  ext4 'VICTORDATA'  $(( raw_data_len_s * 512 / 1073741824 )) GiB  persistent: models, chats, settings, images, outputs, documents, logs
   -  unallocated ~$(( HEADROOM_MIB / 1024 )) GiB left free on purpose
 Marketed vs real capacity: the plan uses the measured byte size above, not the label on the box.
 PLAN
@@ -136,7 +136,7 @@ ISO    : $iso ($(stat -c %s "$iso") bytes)
 Layout (GPT, Ventoy $VENTOY_VERSION):
   1  exFAT  'Ventoy'   $(( p1_mib / 1024 )) GiB   holds the ISO (and any other ISOs you add)
   2  FAT    'VTOYEFI'  $EFI_MIB MiB     Ventoy boot/EFI
-  3  ext4   'TORIDATA' $(( data_mib / 1024 )) GiB   persistent: models, chats, settings, images, outputs, documents, logs
+  3  ext4   'VICTORDATA' $(( data_mib / 1024 )) GiB   persistent: models, chats, settings, images, outputs, documents, logs
   -  unallocated  ~$(( HEADROOM_MIB / 1024 )) GiB   left free on purpose (wear levelling / future repartitioning)
 Marketed vs real capacity: the plan uses the measured byte size above, not the label on the box.
 PLAN
@@ -161,7 +161,7 @@ write_raw() {
   got=$(dd if="$device" bs=4M iflag=direct,count_bytes count="$isob" status=none | sha256sum | awk '{print $1}')
   [[ "$got" == "$want" ]] || die "ISO read back from the device does NOT match its checksum"
   echo "ISO read back from $device matches $want"
-  # add partition 3 (MBR slot 3 was verified free) -> ext4 TORIDATA
+  # add partition 3 (MBR slot 3 was verified free) -> ext4 VICTORDATA
   python3 - "$device" "$raw_data_start_s" "$raw_data_len_s" <<'PY'
 import struct, sys
 dev, start, ln = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
@@ -173,10 +173,10 @@ PY
   sync; partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
   local p3; if [[ "$device" == *[0-9] ]]; then p3="${device}p3"; else p3="${device}3"; fi
   [[ -b "$p3" ]] || die "partition 3 did not appear ($p3)"
-  mkfs.ext4 -q -F -L TORIDATA -m 0 -E lazy_itable_init=1 "$p3"
+  mkfs.ext4 -q -F -L VICTORDATA -m 0 -E lazy_itable_init=1 "$p3"
   local mnt; mnt=$(mktemp -d); mount "$p3" "$mnt"
-  mkdir -p "$mnt/tori"/{models,chats,config,images,outputs,documents,logs,server}
-  chown -R 1000:1000 "$mnt/tori"; chmod 700 "$mnt/tori/config"
+  mkdir -p "$mnt/victorlinux"/{models,chats,config,images,outputs,documents,logs,server}
+  chown -R 1000:1000 "$mnt/victorlinux"; chmod 700 "$mnt/victorlinux/config"
   sync; umount "$mnt"; rmdir "$mnt"; sync; blockdev --flushbufs "$device"
   echo; echo "=== Result ==="; lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID "$device"
   echo "Done. ISO verified by read-back; drive is unmounted and safe to remove."
@@ -215,9 +215,9 @@ cmd_write() {
 
   # persistent partition in the space Ventoy reserved at the end
   local p; p() { if [[ "$device" == *[0-9] ]]; then echo "${device}p$1"; else echo "${device}$1"; fi; }
-  sgdisk -n "3:0:+${data_mib}M" -t 3:8300 -c 3:TORIDATA "$device"
+  sgdisk -n "3:0:+${data_mib}M" -t 3:8300 -c 3:VICTORDATA "$device"
   partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
-  mkfs.ext4 -q -F -L TORIDATA -m 0 -E lazy_itable_init=1 "$(p 3)"
+  mkfs.ext4 -q -F -L VICTORDATA -m 0 -E lazy_itable_init=1 "$(p 3)"
 
   # copy ISO to the Ventoy partition and verify it
   local mnt; mnt=$(mktemp -d)
@@ -228,8 +228,8 @@ cmd_write() {
   umount "$mnt"; rmdir "$mnt"
   # initialise the data tree so first boot finds it ready
   mnt=$(mktemp -d); mount "$(p 3)" "$mnt"
-  mkdir -p "$mnt/tori"/{models,chats,config,images,outputs,documents,logs,server}
-  chown -R 1000:1000 "$mnt/tori"; chmod 700 "$mnt/tori/config"
+  mkdir -p "$mnt/victorlinux"/{models,chats,config,images,outputs,documents,logs,server}
+  chown -R 1000:1000 "$mnt/victorlinux"; chmod 700 "$mnt/victorlinux/config"
   sync; umount "$mnt"; rmdir "$mnt"
   sync; blockdev --flushbufs "$device"
   echo; echo "=== Result ==="; sgdisk -p "$device"; lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID "$device"

@@ -5,7 +5,7 @@ set -eu
 git clone "{{ repositories.comfyui }}.git"
 pushd "ComfyUI"
   git checkout "{{ revisions.comfyui }}"
-  git checkout -b tori
+  git checkout -b victor
   python3 -m venv venv
   source venv/bin/activate
     {% if platform == "amd" %}

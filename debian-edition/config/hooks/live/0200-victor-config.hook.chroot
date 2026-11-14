@@ -11,6 +11,17 @@ passwd -l victor >/dev/null
 # NOTE: deliberately NOT in group "sudo". Privileged actions go through /usr/local/lib/victorlinux/victor-priv.
 install -d -m 0750 -o victor -g victor /home/victor
 echo "victorlinux" > /etc/hostname
+rm -f /etc/os-release
+cat > /etc/os-release <<'OS'
+NAME="VictorLinux"
+PRETTY_NAME="VictorLinux (Debian edition)"
+ID=victorlinux
+ID_LIKE=debian
+VERSION_ID="13"
+VERSION_CODENAME=trixie
+HOME_URL="https://github.com/Victorious93/ToriLinux"
+OS
+printf 'VictorLinux (Debian edition)\\n' > /etc/issue
 cat > /etc/hosts <<'H'
 127.0.0.1 localhost
 127.0.1.1 victorlinux

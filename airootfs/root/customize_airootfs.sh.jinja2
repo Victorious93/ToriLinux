@@ -4,24 +4,24 @@
 set -euo pipefail
 
 export CUSTOMIZE_AIROOTFS=/root/customize_airootfs
-export HOME=/home/tori
+export HOME=/home/victor
 export PATH=$HOME/.local/bin:$PATH
 
-# The 'tori' account has NO password (locked in /etc/shadow). The physical console auto-logs in;
-# network logins are impossible until the owner adds an SSH key (see tori-priv / Control Center).
+# The 'victor' account has NO password (locked in /etc/shadow). The physical console auto-logs in;
+# network logins are impossible until the owner adds an SSH key (see victor-priv / Control Center).
 # Nothing here may set a shared password.
-passwd -l tori >/dev/null
+passwd -l victor >/dev/null
 passwd -l root >/dev/null
 
 find /root -type f -name "*.jinja2" -print -delete
 
 # user and runtime dirs with correct ownership
-install -d -o tori -g tori -m 700 /home/tori /home/tori/.cache/tori
-chown -R tori:tori /home/tori
+install -d -o victor -g victor -m 700 /home/victor /home/victor/.cache/victorlinux
+chown -R victor:victor /home/victor
 
 systemctl disable sshd.service 2>/dev/null || true
 systemctl mask sshd.socket 2>/dev/null || true
-systemctl enable tori-boot-setup.service
+systemctl enable victor-boot-setup.service
 systemctl enable systemd-networkd.service
 
 {% if platform == "cuda" %}
@@ -39,17 +39,17 @@ for script in "$CUSTOMIZE_AIROOTFS"/root-scripts/*.sh; do
   HOME=/root CCACHE_DISABLE=1 bash "$script"
 done
 rm -rf /root/sources
-chown -R tori:tori /home/tori
+chown -R victor:victor /home/victor
 
 # optional packs (as the unprivileged user)
 {% if platform == "cuda" and packs %}
-su tori -c "pipx install transient-package"
+su victor -c "pipx install transient-package"
 {% endif %}
-cd /home/tori
+cd /home/victor
 for script in "$CUSTOMIZE_AIROOTFS"/scripts/*.sh; do
   echo "===> Executing script $script"
   chmod +x "$script"
-  su tori -c "$script"
+  su victor -c "$script"
   {% if "hip" in packs or platform == "amd" %}
   rdfind -checksum sha256 -makehardlinks true -makeresultsfile false "." >/dev/null
   {% endif %}
@@ -57,8 +57,16 @@ done
 {% endif %}
 
 # release stamp shown in diagnostics
-cat > /etc/tori-release <<REL
-Tori Linux (Victorious fork)
+rm -f /etc/os-release
+cat > /etc/os-release <<'OS'
+NAME="VictorLinux"
+PRETTY_NAME="VictorLinux (Arch edition)"
+ID=victorlinux
+ID_LIKE=arch
+HOME_URL="https://github.com/Victorious93/ToriLinux"
+OS
+cat > /etc/victor-release <<REL
+VictorLinux (Victorious fork)
 platform={{ platform }} type={{ type }} packs={{ packs|join(",") or "none" }}
 arch_snapshot={{ build.arch_snapshot }}
 $(cat /opt/llama.cpp/BUILDINFO 2>/dev/null || echo "llama.cpp: not included")

@@ -11,12 +11,12 @@
 
 The Control Center reports acceleration from evidence: after a model starts it parses llama-server's log for
 `offloaded N/M layers to GPU` and device lines, and warns if a GPU backend was selected but 0 layers were offloaded.
-`tori-diag` prints: GPU/VRAM from sysfs, `/dev/dri` permissions, `vulkaninfo --summary` devices, the chosen backend
+`victor-diag` prints: GPU/VRAM from sysfs, `/dev/dri` permissions, `vulkaninfo --summary` devices, the chosen backend
 and why, storage state and the log tail.
 
 ## Measuring
 
-`tori-bench vulkan model.gguf` (llama-bench, 3 repetitions) writes results next to your data. Record them in
+`victor-bench vulkan model.gguf` (llama-bench, 3 repetitions) writes results next to your data. Record them in
 [test-report.md](test-report.md) - the hardware results in that file are what counts.
 
 ## Power/clock
@@ -28,5 +28,5 @@ llama-server sleeps/unloads the model after that idle time; *Stop / unload* free
 ## NVIDIA note (platform `cuda`)
 
 The pinned Arch snapshot ships the NVIDIA 620-series driver (`nvidia-open`) and CUDA 13, which support **Turing and newer** GPUs.
-Pascal/Volta cards (e.g. Tesla P40) that the original ToriLinux targeted are **not supported** by this snapshot; use the upstream
-ToriLinux for those. The `cuda` build is not build-verified in this fork unless the test report says so.
+Pascal/Volta cards (e.g. Tesla P40) that the original VictorLinux targeted are **not supported** by this snapshot; use the upstream
+VictorLinux for those. The `cuda` build is not build-verified in this fork unless the test report says so.

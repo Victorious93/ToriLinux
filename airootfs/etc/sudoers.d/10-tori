@@ -1,2 +1,0 @@
-# Only the validated helper; it implements a fixed list of sub-commands (storage mount, SSH keys, power).
-tori ALL=(root) NOPASSWD: /usr/local/lib/tori/tori-priv *

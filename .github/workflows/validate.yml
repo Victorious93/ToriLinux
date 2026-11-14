@@ -26,12 +26,17 @@ jobs:
           python3 .ci/configure.py amd headless >/dev/null
       - name: Shell scripts
         run: |
-          shellcheck -S warning scripts/*.sh airootfs/usr/local/bin/tori-open airootfs/usr/local/bin/tori-tls-cert \
-            airootfs/usr/local/bin/tori-bench airootfs/usr/local/lib/tori/tori-boot-setup \
+          shellcheck -S warning scripts/*.sh airootfs/usr/local/bin/victor-open airootfs/usr/local/bin/victor-tls-cert \
+            airootfs/usr/local/bin/victor-bench airootfs/usr/local/lib/victorlinux/victor-boot-setup \
             airootfs/root/customize_airootfs.sh airootfs/root/customize_airootfs/root-scripts/*.sh \
             airootfs/root/customize_airootfs/scripts/*.sh profiledef.sh
           bash -n profiledef.sh
       - name: Python
         run: |
-          python3 -m py_compile airootfs/usr/local/lib/tori/*.py airootfs/usr/local/lib/tori/tori-priv
-          python3 -m pytest -q tests
+          python3 -m py_compile airootfs/usr/local/lib/victorlinux/*.py airootfs/usr/local/lib/victorlinux/victor-priv
+          python3 -m pytest -q tests debian-edition/tests/test_logic.py debian-edition/tests/test_layout.py
+      - name: Browser regression checks
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          node tests/browser_ui.js

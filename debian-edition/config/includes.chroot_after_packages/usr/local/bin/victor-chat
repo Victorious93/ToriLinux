@@ -11,7 +11,10 @@ port=$(python3 -c "import json;print(json.load(open('$rt'))['port'])")
 scheme=http; [ "$(python3 -c "import json;print(json.load(open('$rt'))['tls'])")" = True ] && scheme=https
 prof=/run/victor/root/chat/firefox-profile
 mkdir -p "$prof"
-# follow the VictorLinux theme (0 = dark, 1 = light) for the web UI
-t=$(/usr/local/bin/victor-theme status 2>/dev/null || echo dark); v=0; [ "$t" = light ] && v=1
-printf 'user_pref("layout.css.prefers-color-scheme.content-override", %s);\nuser_pref("browser.theme.toolbar-theme", %s);\n' "$v" "$v" > "$prof/user.js"
+# Force browser chrome and content dark even if an old profile preferred light.
+cat > "$prof/user.js" <<'PREFS'
+user_pref("layout.css.prefers-color-scheme.content-override", 0);
+user_pref("browser.theme.toolbar-theme", 0);
+user_pref("browser.theme.content-theme", 0);
+PREFS
 exec firefox-esr --no-remote --profile "$prof" "${scheme}://127.0.0.1:${port}/"
