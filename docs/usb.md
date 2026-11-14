@@ -1,6 +1,18 @@
-# USB drive layout (Ventoy + persistent data)
+# USB drive layout
 
-`scripts/make-usb.sh` implements this layout with Ventoy's own installer plus a dedicated ext4 partition:
+`scripts/make-usb.sh` supports two layouts. **`--layout raw` is the default** because it is the one verified to boot under
+UEFI (see [test-report.md](test-report.md)):
+
+```
+raw (default)   1  hybrid ISO + EFI partition (the ISO itself, ~1.8 GiB)
+                3  ext4 "TORIDATA"  everything else except ~1 GiB left unallocated
+```
+
+The ISO is written to the drive and an ext4 partition is added in the free space. One OS per stick, UEFI and BIOS. Updating the
+OS means re-running `write` (it re-creates the stick; copy your data off `TORIDATA` first, or re-import models).
+
+`--layout ventoy` gives a multi-ISO stick but, in testing, Ventoy booted this ISO in **legacy BIOS mode only**; UEFI mode did
+not boot it in the emulator. Layout:
 
 ```
 1  exFAT  "Ventoy"    ISO storage (>= 8 GiB or ~2x the ISO). Put extra ISOs here too.

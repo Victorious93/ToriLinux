@@ -3,7 +3,13 @@
 #
 #   scripts/make-usb.sh list
 #   scripts/make-usb.sh plan  --iso out/X.iso --device /dev/sdX
-#   scripts/make-usb.sh write --iso out/X.iso --device /dev/sdX --confirm-serial SERIAL [--ventoy DIR]
+#   scripts/make-usb.sh write --iso out/X.iso --device /dev/sdX --confirm-serial SERIAL [--layout raw|ventoy] [--ventoy DIR]
+#
+# Layouts:
+#   raw     (default, verified for UEFI boot in QEMU) the hybrid ISO is written straight to the drive, then an ext4
+#           partition labelled TORIDATA is added in the free space. One OS per stick; UEFI + BIOS bootable.
+#   ventoy  Ventoy + ISO + TORIDATA. Multi-ISO, but in testing Ventoy booted this ISO in legacy BIOS mode only;
+#           UEFI mode did NOT boot it in the emulator. Use only if you need Ventoy and have tested your hardware.
 #
 # SAFETY: the target is never chosen by capacity. `write` needs the exact device path AND its serial
 # number, re-reads the device identity immediately before writing, refuses the system disk, the
@@ -70,6 +76,29 @@ cmd_list() {
   done
 }
 
+# --- raw hybrid layout helpers ---------------------------------------------------------------
+raw_layout() {   # sets raw_data_start_s raw_data_len_s; args: iso device. Reads the ISO's own MBR (ESP is entry 2).
+  local disk_s=$(( $(dev_bytes "$2") / 512 ))
+  local iso_end_s
+  iso_end_s=$(python3 - "$1" <<'PY'
+import struct, sys
+d = open(sys.argv[1], "rb").read(512)
+assert d[510:512] == b"\x55\xaa", "ISO is not a hybrid image (no MBR)"
+end = 0
+for i in range(4):
+    e = d[446+16*i:446+16*(i+1)]
+    st, ln = struct.unpack("<II", e[8:16]); end = max(end, st + ln)
+slot3 = d[446+32:446+48]
+assert slot3 == bytes(16), "MBR slot 3 is not free"
+print(end)
+PY
+)
+  raw_data_start_s=$(( (iso_end_s + 2047) / 2048 * 2048 ))
+  local headroom_s=$(( HEADROOM_MIB * 2048 ))
+  raw_data_len_s=$(( disk_s - raw_data_start_s - headroom_s ))
+  (( raw_data_len_s * 512 >= MIN_DATA_GIB * 1073741824 )) || die "drive too small for the raw layout (need >= $MIN_DATA_GIB GiB data)"
+}
+
 # --- layout -------------------------------------------------------------------------------
 layout() {   # sets p1_mib data_mib reserve_mib; args: iso device
   local iso_b disk_b
@@ -87,6 +116,19 @@ layout() {   # sets p1_mib data_mib reserve_mib; args: iso device
 
 show_plan() {
   local iso=$1 d=$2
+  if [[ "$layout_kind" == raw ]]; then
+    raw_layout "$iso" "$d"
+    cat <<PLAN
+Target : $d  model='$(dev_field "$d" MODEL)' serial='$(dev_field "$d" SERIAL)' size=$(dev_bytes "$d") bytes ($(( $(dev_bytes "$d") / 1048576 )) MiB) transport=$(dev_field "$d" TRAN)
+ISO    : $iso ($(stat -c %s "$iso") bytes)
+Layout (raw hybrid ISO, MBR):
+  1  ISO9660 hybrid image + EFI system partition   (the ISO itself, $(( raw_data_start_s * 512 / 1048576 )) MiB)
+  3  ext4 'TORIDATA'  $(( raw_data_len_s * 512 / 1073741824 )) GiB  persistent: models, chats, settings, images, outputs, documents, logs
+  -  unallocated ~$(( HEADROOM_MIB / 1024 )) GiB left free on purpose
+Marketed vs real capacity: the plan uses the measured byte size above, not the label on the box.
+PLAN
+    return
+  fi
   layout "$iso" "$d"
   cat <<PLAN
 Target : $d  model='$(dev_field "$d" MODEL)' serial='$(dev_field "$d" SERIAL)' size=$(dev_bytes "$d") bytes ($(( $(dev_bytes "$d") / 1048576 )) MiB) transport=$(dev_field "$d" TRAN)
@@ -102,6 +144,44 @@ PLAN
 
 cmd_plan() { check_target "$device"; show_plan "$iso" "$device"; }
 
+write_raw() {
+  need dd; need python3; need wipefs
+  raw_layout "$iso" "$device"
+  local sig_before; sig_before="$(dev_field "$device" MODEL)|$(dev_field "$device" SERIAL)|$(dev_bytes "$device")"
+  check_target "$device"
+  [[ "$sig_before" == "$(dev_field "$device" MODEL)|$(dev_field "$device" SERIAL)|$(dev_bytes "$device")" ]] || die "device identity changed - aborting"
+  echo ">>> ERASING $device (serial $(dev_field "$device" SERIAL)) now"
+  wipefs -a "$device" >/dev/null
+  sgdisk --zap-all "$device" >/dev/null 2>&1 || true
+  dd if="$iso" of="$device" bs=4M conv=fsync oflag=direct status=progress
+  sync
+  # verify the bytes on the device match the ISO (read back, not the page cache)
+  local isob want got; isob=$(stat -c %s "$iso"); want=$(awk '{print $1}' "$iso.sha256")
+  blockdev --flushbufs "$device"
+  got=$(dd if="$device" bs=4M iflag=direct,count_bytes count="$isob" status=none | sha256sum | awk '{print $1}')
+  [[ "$got" == "$want" ]] || die "ISO read back from the device does NOT match its checksum"
+  echo "ISO read back from $device matches $want"
+  # add partition 3 (MBR slot 3 was verified free) -> ext4 TORIDATA
+  python3 - "$device" "$raw_data_start_s" "$raw_data_len_s" <<'PY'
+import struct, sys
+dev, start, ln = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+entry = struct.pack("<B3sB3sII", 0, b"\xfe\xff\xff", 0x83, b"\xfe\xff\xff", start, ln)   # CHS unused: LBA addressing
+with open(dev, "r+b") as f:
+    f.seek(446 + 32); assert f.read(16) == bytes(16), "slot 3 not free"
+    f.seek(446 + 32); f.write(entry); f.flush()
+PY
+  sync; partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
+  local p3; if [[ "$device" == *[0-9] ]]; then p3="${device}p3"; else p3="${device}3"; fi
+  [[ -b "$p3" ]] || die "partition 3 did not appear ($p3)"
+  mkfs.ext4 -q -F -L TORIDATA -m 0 -E lazy_itable_init=1 "$p3"
+  local mnt; mnt=$(mktemp -d); mount "$p3" "$mnt"
+  mkdir -p "$mnt/tori"/{models,chats,config,images,outputs,documents,logs,server}
+  chown -R 1000:1000 "$mnt/tori"; chmod 700 "$mnt/tori/config"
+  sync; umount "$mnt"; rmdir "$mnt"; sync; blockdev --flushbufs "$device"
+  echo; echo "=== Result ==="; lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID "$device"
+  echo "Done. ISO verified by read-back; drive is unmounted and safe to remove."
+}
+
 cmd_write() {
   [[ $EUID -eq 0 ]] || die "run as root"
   for t in sgdisk mkfs.ext4 blockdev lsblk findmnt sha256sum tar; do need "$t"; done
@@ -114,6 +194,7 @@ cmd_write() {
   show_plan "$iso" "$device"
   local sig_before; sig_before="$(dev_field "$device" MODEL)|$serial|$(dev_bytes "$device")"
 
+  if [[ "$layout_kind" == raw ]]; then write_raw; return; fi
   # Ventoy tools (checksum-verified)
   local vdir=${ventoy_dir:-}
   if [[ -z "$vdir" ]]; then
@@ -157,13 +238,14 @@ cmd_write() {
 
 # --- args ----------------------------------------------------------------------------------
 sub=${1:-}; shift || true
-iso=""; device=""; confirm_serial=""; ventoy_dir=""
+iso=""; device=""; confirm_serial=""; ventoy_dir=""; layout_kind="raw"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --iso) iso=$2; shift 2;;
     --device) device=$2; shift 2;;
     --confirm-serial) confirm_serial=$2; shift 2;;
     --ventoy) ventoy_dir=$2; shift 2;;
+    --layout) layout_kind=$2; shift 2; [[ "$layout_kind" == raw || "$layout_kind" == ventoy ]] || die "--layout must be raw or ventoy";;
     *) die "unknown argument $1";;
   esac
 done

@@ -33,13 +33,14 @@ unless that report says so.
 scripts/build.sh amd gui            # lean: llama.cpp (Vulkan+CPU) + control center + Openbox
 # -> out/torilinux-*.iso, .sha256, manifest-*.json, packages-*.txt, build-*.log
 
-# 2. Prepare the USB (ERASES the chosen drive; read docs/usb.md first)
+# 2. Prepare the USB (ERASES the chosen drive; read docs/usb.md first). Default layout: hybrid ISO + TORIDATA data partition.
+#    (--layout ventoy for a Ventoy multi-ISO stick; see docs/usb.md for its UEFI caveat)
 sudo scripts/make-usb.sh list
 sudo scripts/make-usb.sh plan  --iso out/torilinux-*.iso --device /dev/sdX
 sudo scripts/make-usb.sh write --iso out/torilinux-*.iso --device /dev/sdX --confirm-serial <SERIAL>
 ```
 
-Boot the stick (UEFI), pick the ISO in Ventoy, then run `tori-open`. Details:
+Boot the stick (UEFI or BIOS), then run `tori-open`. Details:
 
 * [docs/build.md](docs/build.md) - build profiles, packs, pins, CI, reproducibility
 * [docs/usb.md](docs/usb.md) - Ventoy layout, sizing for 64/128 GB, what persists
