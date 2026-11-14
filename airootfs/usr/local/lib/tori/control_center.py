@@ -209,7 +209,10 @@ class App:
         time.sleep(1.5)
         if not self.llm.running():
             return {"ok": False, "error": "llama-server exited immediately. See the log below.", "log": self.tail("llama", 40)}
-        self.start_gateway(settings)
+        gw = self.start_gateway(settings)
+        if not gw.get("ok"):
+            return {"ok": False, "error": "Model started but the API gateway did not: " + gw.get("error", "unknown"),
+                    "log": self.tail("gateway", 20)}
         return {"ok": True, "plan": self.llm_info}
 
     def stop_llm(self):

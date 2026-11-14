@@ -191,6 +191,8 @@ def render_nodes():
     d = "/dev/dri"
     if os.path.isdir(d):
         for n in sorted(os.listdir(d)):
+            if not re.fullmatch(r"(card|renderD)\d+", n):
+                continue          # skip the by-path/ directory etc.
             p = os.path.join(d, n)
             res.append({"path": p, "accessible": os.access(p, os.R_OK | os.W_OK)})
     return res

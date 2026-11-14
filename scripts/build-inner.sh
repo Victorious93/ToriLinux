@@ -18,6 +18,9 @@ profile=$(sed -n 's/^PROFILE //p' /tmp/configure.out)
 [ -f airootfs/root/sources/llama.cpp.rev ] || { echo "run scripts/prepare-sources.sh first" >&2; exit 1; }
 if grep -q 'type=empty' <<<"$profile"; then rm -rf airootfs/root/sources; fi
 
+# never ship stray bytecode caches from local test runs
+find airootfs -name __pycache__ -type d -prune -exec rm -rf {} +
+
 mkdir -p "$OUTDIR"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 log="$OUTDIR/build-$stamp.log"

@@ -23,6 +23,8 @@ SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs"
 UUID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z\-]{3,63}$")        # ext4 UUIDs, FAT/exFAT serials, NTFS serials
 PERSIST_FS = ("ext4", "ext3", "ext2", "btrfs", "xfs", "f2fs")        # need POSIX ownership/permissions
 RO_FS = PERSIST_FS + ("exfat", "ntfs", "vfat")
+# block-device types that may carry a filesystem ("disk" = filesystem directly on the whole device, no partition table)
+FS_TYPES = ("part", "disk", "loop", "crypt", "lvm")
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-tori.conf"
 KEYS = f"/home/{USER}/.ssh/authorized_keys"
 KEY_TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
@@ -69,7 +71,7 @@ def lsblk():
     # lsblk depends on the udev database; fall back to probing the device directly so that
     # detection still works early in boot or inside minimal environments.
     for d in flatten(devs):
-        if d["type"] in ("part", "loop", "crypt", "lvm") and not d.get("fstype"):
+        if d["type"] in FS_TYPES and not d.get("fstype"):
             b = run(["blkid", "-o", "export", d["path"]])
             if b.returncode == 0:
                 kv = dict(l.split("=", 1) for l in b.stdout.splitlines() if "=" in l)
@@ -88,7 +90,7 @@ def part_by_uuid(uuid):
     if not UUID_RE.match(uuid or ""):
         die("Invalid UUID format.")
     for d in flatten(lsblk()):
-        if d.get("uuid") and d["uuid"].lower() == uuid.lower() and d["type"] in ("part", "loop", "crypt", "lvm"):
+        if d.get("uuid") and d["uuid"].lower() == uuid.lower() and d["type"] in FS_TYPES and d.get("fstype"):
             return d
     die("No filesystem with that UUID was found.")
 
@@ -133,11 +135,11 @@ def link_home(root):
 def cmd_list_storage(_a):
     out = []
     for d in flatten(lsblk()):
-        if d["type"] not in ("part", "loop", "crypt", "lvm") or not d.get("fstype") or d["fstype"] in ("swap", "iso9660", "squashfs"):
+        if d["type"] not in FS_TYPES or not d.get("fstype") or d["fstype"] in ("swap", "iso9660", "squashfs"):
             continue
         if is_boot_dev(d):
             continue
-        par = d.get("_parent") or {}
+        par = d.get("_parent") or d
         out.append({"path": d["path"], "uuid": d.get("uuid"), "label": d.get("label"), "fstype": d["fstype"],
                     "size": int(d["size"] or 0), "removable": bool(d.get("rm") or par.get("rm")),
                     "transport": par.get("tran"), "model": (par.get("model") or "").strip(), "serial": par.get("serial"),

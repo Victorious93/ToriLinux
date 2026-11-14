@@ -63,10 +63,13 @@ try:
     check("cc: save settings", s == 200, str(r))
     s, r = call(18787, "POST", "/api/llm/start", {}, T)
     check("cc: start llm", r.get("ok") is True, str(r)[:500])
-    for _ in range(60):
-        if call(8080, "GET", "/tori/health")[0] == 200:
-            break
-        time.sleep(1)
+    for _ in range(180):          # slow (emulated) machines need a while to load the model and start the gateway
+        try:
+            if call(8080, "GET", "/tori/health")[0] == 200:
+                break
+        except OSError:
+            pass
+        time.sleep(2)
     s, h = call(8080, "GET", "/tori/health")
     check("gw: health ok, loopback no auth required", s == 200 and h["auth_required"] is False, str(h))
     s, r = call(8080, "POST", "/v1/chat/completions", {"model": "x", "max_tokens": 8, "messages": [{"role": "user", "content": "Once upon a time"}]})

@@ -11,7 +11,10 @@ jobs=$(nproc)
 build_backend() {
   local name=$1; shift
   echo "===> llama.cpp backend: $name"
+  # the source is a .git-less snapshot, so tell llama.cpp which build this is (shown in --version and logs)
+  local rev; rev=$(cat /root/sources/llama.cpp.rev)
   cmake -S "$src" -B "/var/tmp/llama-build-$name" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DLLAMA_BUILD_NUMBER="{{ revisions.llamacpp|replace('b','') }}" -DLLAMA_BUILD_COMMIT="${rev:0:7}" \
     -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN' \
     -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON "$@"
