@@ -155,7 +155,9 @@ def auto_context(weights, kv_for, overhead, budget, ctx_train=None, floor=CTX_MI
         if c < floor:
             break
         if weights + (kv_for(c) or 0) + overhead <= budget:
-            return c, True, f"Automatic context {c} for this PC's free memory."
+            if ctx_train and c == ctx_train:
+                return c, True, f"Automatic context {c}: the model's trained maximum fits in this PC's free memory."
+            return c, True, f"Automatic context {c}, the most this PC's free memory allows."
     return floor, weights + (kv_for(floor) or 0) + overhead <= budget, \
         "Even the minimum context is tight for this PC's free memory; expect partial offload or failure."
 
