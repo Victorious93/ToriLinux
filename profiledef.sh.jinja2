@@ -2,20 +2,32 @@
 # shellcheck disable=SC2034
 
 iso_name="torilinux"
-iso_label="TORI_{{ platform|upper }}_{{ type|upper }}_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y%m%d_%H%M%S")"
-iso_publisher="Tori Linux"
-iso_application="Tori Linux ({{ "CUDA" if platform == "cuda" else "ROCm" }}, {{ type }})"
-iso_version="{{ platform }}-{{ type }}-$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y-%m-%d_%H-%M-%S")"
-install_dir="tori_{{ platform }}_{{ type }}"
+iso_label="TORI_{{ platform|upper }}_{{ type|upper }}"
+iso_publisher="ToriLinux (Victorious fork) <https://github.com/Victorious93/ToriLinux>"
+iso_application="Tori Linux ({{ platform }}, {{ type }})"
+iso_version="{{ platform }}-{{ type }}{% if packs %}-{{ packs|join("+") }}{% endif %}-$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y-%m-%d_%H-%M-%S")"
+install_dir="tori{{ platform }}{{ type }}"
 buildmodes=("iso")
-bootmodes=("bios.syslinux.mbr" "bios.syslinux.eltorito"
-           "uefi-ia32.systemd-boot.esp" "uefi-x64.systemd-boot.esp"
-           "uefi-ia32.systemd-boot.eltorito" "uefi-x64.systemd-boot.eltorito")
+bootmodes=("bios.syslinux" "uefi.systemd-boot")
 arch="x86_64"
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
-airootfs_image_tool_options=("-comp" "lz4" "-Xhc")
+airootfs_image_tool_options=("-comp" "zstd" "-Xcompression-level" "15" "-b" "1M")
 file_permissions=(
   ["/etc/gshadow"]="0:0:400"
   ["/etc/shadow"]="0:0:400"
+  ["/etc/sudoers.d"]="0:0:750"
+  ["/etc/sudoers.d/10-tori"]="0:0:440"
+  ["/usr/local/lib/tori/tori-priv"]="0:0:755"
+  ["/usr/local/lib/tori/control_center.py"]="0:0:644"
+  ["/usr/local/lib/tori/gateway.py"]="0:0:644"
+  ["/usr/local/bin/tori-control-center"]="0:0:755"
+  ["/usr/local/bin/tori-open"]="0:0:755"
+  ["/usr/local/bin/tori-tls-cert"]="0:0:755"
+  ["/usr/local/bin/tori-diag"]="0:0:755"
+  ["/usr/local/bin/tori-model-import"]="0:0:755"
+  ["/usr/local/bin/tori-capcheck"]="0:0:755"
+  ["/usr/local/bin/tori-bench"]="0:0:755"
+  ["/usr/local/lib/tori/tori-boot-setup"]="0:0:755"
+  ["/root/customize_airootfs.sh"]="0:0:755"
 )

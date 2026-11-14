@@ -1,77 +1,96 @@
 #!/usr/bin/env python3
+"""Render the *.jinja2 build templates for a chosen profile.
 
+usage: .ci/configure.py PLATFORM TYPE [--packs a,b,c]
+
+  PLATFORM  amd    AMD GPUs: llama.cpp Vulkan (default path) + CPU fallback
+            cuda   NVIDIA GPUs: llama.cpp CUDA + Vulkan + CPU
+            rocm   alias for `amd` with the experimental `hip` pack
+  TYPE      headless (alias: normal)  no desktop; control center reachable via browser/tori-open
+            gui                       Openbox desktop that autostarts the control center
+            empty                     drivers/OS only: no llama.cpp, no packs (as upstream "empty")
+  PACKS     optional extras, all off by default (lean image):
+            hip comfyui automatic invokeai sillytavern vllm(cuda only)
+
+Modified by Victorious / Victorious Framework from upstream ToriLinux (sasha0552, MIT).
+"""
 import configparser
 import glob
-import jinja2
 import json
 import sys
 
+import jinja2
+
+PLATFORMS = ("amd", "cuda", "rocm")
+TYPES = ("headless", "normal", "gui", "empty")
+PACKS = ("hip", "comfyui", "automatic", "invokeai", "sillytavern", "vllm")
+
+
 def render_template(filepath, **options):
-  if filepath.endswith(".jinja2"):
-    # read input file
-    with open(filepath, "r") as file:
-      template = jinja2.Template(file.read(), lstrip_blocks=True, trim_blocks=True)
+  if not filepath.endswith(".jinja2"):
+    return
+  with open(filepath, "r") as file:
+    template = jinja2.Template(file.read(), lstrip_blocks=True, trim_blocks=True,
+                               undefined=jinja2.StrictUndefined, keep_trailing_newline=True)
+  rendered = template.render(**options)
+  with open(filepath[:-7], "w") as file:
+    file.write(rendered)
 
-    # render template
-    rendered = template.render(**options)
 
-    # write output file
-    with open(filepath[:-7], "w") as file:
-      file.write(rendered)
+def parse(argv):
+  args, packs = [], []
+  it = iter(argv)
+  for a in it:
+    if a == "--packs":
+      packs = [p for p in next(it, "").split(",") if p]
+    elif a.startswith("--packs="):
+      packs = [p for p in a.split("=", 1)[1].split(",") if p]
+    else:
+      args.append(a)
+  platform = args[0] if len(args) > 0 else "amd"
+  type_ = args[1] if len(args) > 1 else "headless"
+  if platform not in PLATFORMS:
+    sys.exit(f"unknown platform '{platform}' (use: {', '.join(PLATFORMS)})")
+  if type_ not in TYPES:
+    sys.exit(f"unknown type '{type_}' (use: {', '.join(TYPES)})")
+  for p in packs:
+    if p not in PACKS:
+      sys.exit(f"unknown pack '{p}' (use: {', '.join(PACKS)})")
+  if platform == "rocm":
+    platform = "amd"
+    packs = sorted(set(packs) | {"hip"})
+  if type_ == "normal":
+    type_ = "headless"
+  if type_ == "empty":
+    packs = []
+  if "vllm" in packs and platform != "cuda":
+    sys.exit("pack 'vllm' is only available on the cuda platform")
+  if "invokeai" in packs and platform != "cuda":
+    sys.exit("pack 'invokeai' is only available on the cuda platform (as upstream)")
+  return platform, type_, sorted(set(packs))
+
 
 def main():
-  # by default, use cuda
-  platform = "cuda"
-
-  # and normal iso
-  type = "normal"
-
-  # and empty options
-  options = {}
-
-  # set platform
-  if len(sys.argv) >= 2:
-    platform = sys.argv[1]
-
-  # set type
-  if len(sys.argv) >= 3:
-    type = sys.argv[2]
-
-  # load options
+  platform, type_, packs = parse(sys.argv[1:])
   config = configparser.ConfigParser()
   config.read(".ci/options.ini")
+  options = {s: dict(config.items(s)) for s in ("repositories", "revisions", "files", "build")}
 
-  # repositories
-  options["repositories"] = dict(config.items("repositories"))
-
-  # revisions
-  options["revisions"] = dict(config.items("revisions"))
-
-  # files
-  options["files"] = dict(config.items("files"))
-
-  def gh_release(name, index = None):
+  def gh_release(name, index=None):
     fn = options["files"][name]
     if index is not None:
       fn = json.loads(fn)[index]
     return f"{options['repositories'][name]}/releases/download/{options['revisions'][name]}/{fn}"
 
-  # list of rendered files
   rendered = []
-
-  # render every file
-  for filepath in glob.glob("**/*.jinja2", recursive=True) + [".gitignore.jinja2"]:
-    # sort rendered list
+  for filepath in sorted(glob.glob("**/*.jinja2", recursive=True)) + [".gitignore.jinja2"]:
     rendered.sort()
-
-    # render file
-    render_template(filepath, platform=platform, type=type, rendered=rendered, gh_release=gh_release, **options)
-
-    # add output file to rendered list
+    render_template(filepath, platform=platform, type=type_, packs=packs, rendered=rendered,
+                    gh_release=gh_release, **options)
     rendered.append(filepath[:-7].replace("\\", "/"))
-
-    # print status
     print(f"File '{filepath}' rendered successfully")
+  print(f"PROFILE platform={platform} type={type_} packs={','.join(packs) or '-'}")
+
 
 if __name__ == "__main__":
   main()

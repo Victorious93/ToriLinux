@@ -1,34 +1,19 @@
 #!/bin/bash
 set -eu
-
-# clone repository
+{% if "comfyui" in packs %}
+# EXPERIMENTAL pack: not build-verified in the Victorious fork yet.
 git clone "{{ repositories.comfyui }}.git"
-
-# ComfyUI patches
 pushd "ComfyUI"
-  # use specific revision
   git checkout "{{ revisions.comfyui }}"
-
-  # create branch
   git checkout -b tori
-popd
-
-# ComfyUI dependencies
-pushd "ComfyUI"
-  # create venv
   python3 -m venv venv
-
-  # activate venv
   source venv/bin/activate
-    {% if platform == "rocm" %}
-    # extract pytorch version
-    index_url=$(grep -o 'https://download.pytorch.org/whl/rocm[0-9.]*' README.md)
-
-    # install pytorch
+    {% if platform == "amd" %}
+    # PyTorch ROCm wheels (build-time download). The index is taken from ComfyUI's own README.
+    index_url=$(grep -o 'https://download.pytorch.org/whl/rocm[0-9.]*' README.md | head -n1)
     pip3 install torch torchvision torchaudio --index-url "$index_url"
     {% endif %}
-
-    # install dependencies
     pip3 install -r requirements.txt
   deactivate
 popd
+{% endif %}

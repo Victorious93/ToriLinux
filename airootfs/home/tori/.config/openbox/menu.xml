@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu>
   <menu id="root-menu" label="OpenBox 3">
+    <item label="Tori Control Center">
+      <action name="Execute">
+        <execute>tori-open</execute>
+      </action>
+    </item>
+
+    <separator/>
+
     <menu id="games-menu" label="Games">
       <item label="kmahjongg">
         <action name="Execute">

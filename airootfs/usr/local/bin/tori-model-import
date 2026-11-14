@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Validate and import a GGUF model into persistent storage.
+usage: tori-model-import FILE.gguf [--sha256 HEX]"""
+import argparse, sys
+import os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "tori"))
+import toricommon as tc  # noqa: E402
+
+ap = argparse.ArgumentParser()
+ap.add_argument("file")
+ap.add_argument("--sha256")
+a = ap.parse_args()
+dest = tc.data_path("models")
+if not dest:
+    sys.exit("No storage selected (open the Control Center, or run: sudo -n /usr/local/lib/tori/tori-priv persist-auto)")
+try:
+    est = tc.estimate_memory(a.file, 4096)
+    print(f"Valid GGUF header: arch={est['arch']} layers={est['n_layer']} size={tc.human(est['weights'])}; "
+          f"est. memory at 4k ctx ~{tc.human(est['total'])}")
+    p, digest = tc.import_model(a.file, dest, a.sha256, lambda d, t: print(f"\r{d*100//max(t,1)}%", end="", file=sys.stderr))
+except (ValueError, tc.GGUFError, OSError) as e:
+    sys.exit(f"\nImport failed: {e}")
+print(f"\nImported to {p}\nsha256 {digest}" + (" (matches expected)" if a.sha256 else " (no expected checksum supplied; integrity not verified against a source)"))

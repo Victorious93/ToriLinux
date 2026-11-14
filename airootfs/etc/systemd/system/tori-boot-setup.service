@@ -1,0 +1,15 @@
+[Unit]
+Description=Tori: locate persistent storage (label TORIDATA) and prepare runtime state
+After=local-fs.target systemd-udevd.service
+Wants=systemd-udevd.service
+Before=getty@tty1.service
+ConditionPathExists=/usr/local/lib/tori/tori-priv
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/tori/tori-boot-setup
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

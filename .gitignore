@@ -1,13 +1,17 @@
 out/
+handoff/
 venv/
 work/
+__pycache__/
+.pytest_cache/
+airootfs/root/sources/
 
 # rendered files
 airootfs/root/customize_airootfs.sh
+airootfs/root/customize_airootfs/root-scripts/100-llamacpp.sh
 airootfs/root/customize_airootfs/scripts/1000-automatic.sh
 airootfs/root/customize_airootfs/scripts/1000-comfyui.sh
 airootfs/root/customize_airootfs/scripts/1000-invokeai.sh
-airootfs/root/customize_airootfs/scripts/1000-llamacpp.sh
 airootfs/root/customize_airootfs/scripts/1000-sillytavern.sh
 airootfs/root/customize_airootfs/scripts/1000-vllm.sh
 airootfs/root/customize_airootfs/scripts/2000-replace-nonpascal-pkgs.sh
