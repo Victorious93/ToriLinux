@@ -34,7 +34,7 @@ build_backend vulkan -DGGML_VULKAN=ON
 
 {% if platform == "cuda" %}
 build_backend cuda -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="{{ build.cuda_architectures }}" \
-  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-12 -DCMAKE_CUDA_COMPILER=/opt/cuda/bin/nvcc
+  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-15 -DCMAKE_CUDA_COMPILER=/opt/cuda/bin/nvcc
 {% endif %}
 
 {% if "hip" in packs %}

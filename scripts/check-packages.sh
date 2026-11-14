@@ -8,7 +8,8 @@ pacman --config pacman.conf --dbpath "$db" -Sy >/dev/null
 missing=0
 while read -r pkg; do
   [[ -z "$pkg" || "$pkg" == \#* ]] && continue
-  if ! pacman --config pacman.conf --dbpath "$db" -Si "$pkg" >/dev/null 2>&1; then
+  if ! pacman --config pacman.conf --dbpath "$db" -Si "$pkg" >/dev/null 2>&1 \
+     && ! pacman --config pacman.conf --dbpath "$db" -Sg "$pkg" 2>/dev/null | grep -q .; then
     echo "MISSING in snapshot: $pkg"; missing=1
   fi
 done < packages.x86_64

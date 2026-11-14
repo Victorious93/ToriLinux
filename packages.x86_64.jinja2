@@ -66,11 +66,11 @@ mesa
 {% endif %}
 
 {% if platform == "cuda" %}
-# NVIDIA / CUDA
+# NVIDIA / CUDA (current drivers + CUDA 13 support Turing and newer; Pascal/Volta are NOT supported by this snapshot)
 cuda
-nvidia
+nvidia-open
 nvidia-utils
-gcc12
+gcc15
 {% endif %}
 
 {% if platform == "amd" %}
@@ -87,7 +87,6 @@ rocm-hip-sdk
 feh
 firefox
 konsole
-obconf
 openbox
 tint2
 ttf-dejavu

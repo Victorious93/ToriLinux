@@ -24,3 +24,9 @@ and why, storage state and the log tail.
 No clock/voltage manipulation is shipped. Idle behaviour is handled by unloading: set *Idle unload (s)* and
 llama-server sleeps/unloads the model after that idle time; *Stop / unload* frees VRAM immediately.
 `nvidia-pstated` is still installed on the `cuda` platform only.
+
+## NVIDIA note (platform `cuda`)
+
+The pinned Arch snapshot ships the NVIDIA 620-series driver (`nvidia-open`) and CUDA 13, which support **Turing and newer** GPUs.
+Pascal/Volta cards (e.g. Tesla P40) that the original ToriLinux targeted are **not supported** by this snapshot; use the upstream
+ToriLinux for those. The `cuda` build is not build-verified in this fork unless the test report says so.

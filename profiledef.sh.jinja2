@@ -5,7 +5,7 @@ iso_name="torilinux"
 iso_label="TORI_{{ platform|upper }}_{{ type|upper }}"
 iso_publisher="ToriLinux (Victorious fork) <https://github.com/Victorious93/ToriLinux>"
 iso_application="Tori Linux ({{ platform }}, {{ type }})"
-iso_version="{{ platform }}-{{ type }}-$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y-%m-%d_%H-%M-%S")"
+iso_version="{{ platform }}-{{ type }}{% if packs %}-{{ packs|join("+") }}{% endif %}-$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y-%m-%d_%H-%M-%S")"
 install_dir="tori{{ platform }}{{ type }}"
 buildmodes=("iso")
 bootmodes=("bios.syslinux" "uefi.systemd-boot")
