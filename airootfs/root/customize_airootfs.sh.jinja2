@@ -25,8 +25,8 @@ systemctl enable tori-boot-setup.service
 systemctl enable systemd-networkd.service
 
 {% if platform == "cuda" %}
-wget "{{ gh_release("nvidia_pstated") }}" -O "/usr/local/bin/nvidia-pstated"
-chmod +x "/usr/local/bin/nvidia-pstated"
+# pre-fetched and checksummed by scripts/prepare-sources.sh (no network inside the chroot)
+install -m 755 /root/sources/nvidia-pstated /usr/local/bin/nvidia-pstated
 systemctl enable nvidia-persistenced
 systemctl enable nvidia-pstated.service
 {% endif %}

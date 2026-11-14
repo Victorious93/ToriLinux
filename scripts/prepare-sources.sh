@@ -39,4 +39,11 @@ tar -xzf "$ui_tmp/dist.tar.gz" -C "$dest/llama.cpp/tools/ui/dist"
 echo "$got_ui" > "$dest/llama.cpp.ui.sha256"
 rm -rf "$ui_tmp"
 echo "llama UI bundle $got_ui"
+
+# nvidia-pstated (CUDA platform only uses it): fetched here so the chroot needs no TLS/network access.
+ps_url="$(opt repositories nvidia_pstated)/releases/download/$(opt revisions nvidia_pstated)/$(opt files nvidia_pstated)"
+curl -fsSL -o "$dest/nvidia-pstated" "$ps_url"
+chmod +x "$dest/nvidia-pstated"
+sha256sum "$dest/nvidia-pstated" | awk '{print $1}' > "$dest/nvidia-pstated.sha256"
+echo "nvidia-pstated $(cat "$dest/nvidia-pstated.sha256")"
 echo "llama.cpp $tag = $got"
