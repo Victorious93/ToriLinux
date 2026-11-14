@@ -1,4 +1,4 @@
-# VictorLinux
+# VictorLinux - portable offline AI workstation on a USB drive
 
 **Your portable, private AI workstation.** Boot a PC from a USB drive or from an ISO exposed by **Victorious Flash** on a supported rooted Android phone. In both cases, inference runs on the **PC's CPU, RAM and GPU**.
 
