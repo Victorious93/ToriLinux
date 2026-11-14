@@ -9,6 +9,8 @@ marketed size differ, so every number below is derived at run time.
   provision-usb.py plan  --device /dev/sdX --iso F   # real capacity -> layout; rejects layouts that do not fit
   provision-usb.py plan  --size-bytes N --iso F      # same, for a hypothetical/virtual disk
   provision-usb.py write --device /dev/sdX --iso F --confirm 'ERASE <id>' [--ventoy-dir DIR]
+  ...  --layout ventoy (default) | raw      # raw: the hybrid ISO is written byte-for-byte + a VICTORDATA partition after it
+                                            # (one OS per stick, no Ventoy, UEFI+BIOS via the ISO's own boot records)
 
 `write` never guesses: it requires the exact confirmation string printed by `plan`, which embeds the device's
 model/serial/size identity, and re-reads that identity immediately before writing.
@@ -82,6 +84,63 @@ def fmt_layout(l):
         f"  VICTORDATA (ext4, persist): {g('data_partition_bytes')}",
         f"  unallocated spare         : {g('spare_unallocated_bytes')}",
         f"  Ventoy reserve argument   : -r {l['ventoy_reserve_mib']} (MiB)",
+    ])
+
+
+# ---------------------------------------------------------------- raw hybrid-ISO layout
+def inspect_iso_mbr(sector0, iso_bytes):
+    """Pure. Parse the ISO's MBR (first 512 bytes) and decide whether a data partition can be appended in an empty
+    primary slot. Returns {"free_slot": 0-3, "iso_end_sector": int, "entries": [...]}; raises Rejected otherwise."""
+    if len(sector0) < 512 or sector0[510:512] != b"\x55\xaa":
+        raise Rejected("ISO has no MBR boot signature: it is not a hybrid image, so it cannot be written raw")
+    entries, free, end = [], [], 0
+    for i in range(4):
+        e = sector0[446 + 16 * i: 446 + 16 * (i + 1)]
+        ptype, start, size = e[4], int.from_bytes(e[8:12], "little"), int.from_bytes(e[12:16], "little")
+        if ptype == 0xEE:
+            raise Rejected("ISO carries a GPT protective partition; a raw write would leave its backup GPT header "
+                           "unrelocated. Use --layout ventoy for this image")
+        if ptype == 0 and size == 0:
+            free.append(i)
+        else:
+            entries.append({"slot": i, "type": ptype, "start": start, "size": size})
+            end = max(end, start + size)
+    if not free:
+        raise Rejected("the ISO's MBR has no free primary slot for a data partition")
+    if end * 512 > iso_bytes + 512 * 2048:
+        raise Rejected("ISO partition entries extend past the end of the ISO file; image looks truncated or odd")
+    return {"free_slot": free[0], "iso_end_sector": max(end, -(-iso_bytes // 512)), "entries": entries}
+
+
+def compute_layout_raw(total_bytes, iso_end_sector, min_data=MIN_DATA):
+    """Pure. The ISO occupies sectors [0, iso_end_sector); VICTORDATA starts at the next MiB boundary and runs to the end
+    of the disk minus a spare. All numbers derive from the real capacity; nothing is looked up by marketed size."""
+    if total_bytes <= 0 or iso_end_sector <= 0:
+        raise Rejected("capacity and ISO size must be positive")
+    start = align_up(iso_end_sector * 512)
+    spare = align_up(max(MIN_SPARE, int(total_bytes * SPARE_FRACTION)))
+    data = align_down(align_down(total_bytes) - start - spare)
+    data = min(data, align_down(2**32 * 512 - start))      # an MBR entry addresses at most 2 TiB (32-bit sector numbers)
+    if data < min_data:
+        raise Rejected(f"Layout does not fit: drive has {total_bytes} B ({total_bytes/GiB:.2f} GiB); the raw ISO ends at "
+                       f"{start/GiB:.2f} GiB and a {spare/GiB:.2f} GiB spare leaves only {max(data,0)/GiB:.2f} GiB for data "
+                       f"(minimum {min_data/GiB:.0f} GiB).")
+    layout = {"kind": "raw", "total_bytes": total_bytes, "iso_end_sector": iso_end_sector,
+              "data_start_bytes": start, "data_start_sector": start // 512, "data_partition_bytes": data,
+              "data_sectors": data // 512, "spare_unallocated_bytes": total_bytes - start - data, "alignment_bytes": MiB}
+    assert start + data <= total_bytes, "internal error: layout exceeds device"
+    return layout
+
+
+def fmt_layout_raw(l, iso_bytes):
+    g = lambda b: f"{b/GiB:8.2f} GiB"
+    return "\n".join([
+        f"  device capacity (real)    : {l['total_bytes']:>16,d} B  ({l['total_bytes']/GiB:.2f} GiB)",
+        f"  ISO written raw (measured): {iso_bytes:>16,d} B  (hybrid: BIOS+UEFI boot records come from the ISO itself)",
+        f"  VICTORDATA (ext4, persist): {g(l['data_partition_bytes'])}  starting at sector {l['data_start_sector']}",
+        f"  unallocated spare         : {g(l['spare_unallocated_bytes'])}",
+        "  NOTE: the ISO's own partitions are read-only media; updating the OS means re-running write (VICTORDATA is lost",
+        "        unless you back it up first: raw mode rewrites the whole drive).",
     ])
 
 
@@ -201,15 +260,22 @@ def cmd_plan(a):
         ident = identity(d)
     else:
         total, ident = a.size_bytes, f"virtual:{a.size_bytes}"
+    kind = getattr(a, "layout", "ventoy")
     try:
-        l = compute_layout(total, iso_bytes, a.min_data_gib * GiB)
+        if kind == "raw":
+            with open(a.iso, "rb") as f:
+                mbr = inspect_iso_mbr(f.read(512), iso_bytes)
+            l = compute_layout_raw(total, mbr["iso_end_sector"], a.min_data_gib * GiB)
+            l["mbr_free_slot"] = mbr["free_slot"]
+        else:
+            l = compute_layout(total, iso_bytes, a.min_data_gib * GiB)
     except Rejected as e:
         print(f"REJECTED: {e}", file=sys.stderr)
         raise SystemExit(3)
     if a.json:
         print(json.dumps({"identity": ident, "layout": l}, indent=2))
     else:
-        print(f"Target identity: {ident}\nProposed layout:\n{fmt_layout(l)}")
+        print(f"Target identity: {ident}\nProposed layout ({kind}):\n{fmt_layout_raw(l, iso_bytes) if kind == 'raw' else fmt_layout(l)}")
         print(f"\nTo write, pass exactly:  --confirm 'ERASE {ident}'")
     return l, ident
 
@@ -230,9 +296,12 @@ def sha256(path):
 REQUIRED_TOOLS = ["lsblk", "sfdisk", "partprobe", "udevadm", "mkfs.ext4", "mount", "umount", "cp", "sync", "bash", "blkid"]
 
 
-def require_tools():
+RAW_TOOLS = ["lsblk", "dd", "blockdev", "partprobe", "udevadm", "mkfs.ext4", "sync", "blkid", "wipefs"]
+
+
+def require_tools(kind="ventoy"):
     os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/sbin:/sbin:/usr/local/sbin"
-    missing = [t for t in REQUIRED_TOOLS if not shutil.which(t)]
+    missing = [t for t in (RAW_TOOLS if kind == "raw" else REQUIRED_TOOLS) if not shutil.which(t)]
     if missing:
         raise SystemExit("missing required tools (checked BEFORE any write): " + ", ".join(missing) +
                          "  -> apt install util-linux parted e2fsprogs udev")
@@ -241,7 +310,8 @@ def require_tools():
 def cmd_write(a):
     if os.geteuid() != 0:
         raise SystemExit("write needs root")
-    require_tools()
+    kind = a.layout
+    require_tools(kind)
     iso_sha_file = a.iso + ".sha256"
     want = None
     if os.path.exists(iso_sha_file):
@@ -252,7 +322,7 @@ def cmd_write(a):
         raise SystemExit(f"{iso_sha_file} missing; pass --allow-unverified-iso to override")
     a.json = False
     l, ident = cmd_plan(argparse.Namespace(device=a.device, size_bytes=None, iso=a.iso, json=False,
-                                           min_data_gib=MIN_DATA // GiB))
+                                           min_data_gib=MIN_DATA // GiB, layout=kind))
     token = f"ERASE {ident}"
     if a.confirm != token:
         raise SystemExit(f"confirmation mismatch. Required exactly: --confirm '{token}'")
@@ -263,6 +333,8 @@ def cmd_write(a):
     why = protected_reasons(d, paths)
     if why:
         raise SystemExit(f"refusing: {', '.join(why)}")
+    if kind == "raw":
+        return write_raw(a, d, ident, l, want)
     vt = os.path.join(a.ventoy_dir, "Ventoy2Disk.sh")
     if not os.path.exists(vt):
         raise SystemExit(f"{vt} not found (download+verify Ventoy first: scripts/fetch-ventoy.sh)")
@@ -323,6 +395,66 @@ def cmd_write(a):
     print("DONE: drive prepared. Safe to remove after the OS reports it unmounted.")
 
 
+def write_raw(a, d, ident, l, want):
+    """Raw hybrid-ISO write. Caller already verified: root, tools, ISO checksum, confirmation token, identity, protections."""
+    dev = os.path.realpath(a.device)
+    iso_bytes = os.path.getsize(a.iso)
+    for mp in sorted(mounts_of(d), key=len, reverse=True):          # unmount ONLY this disk's filesystems
+        sh(["umount", mp])
+
+    def same_disk():
+        if identity(find_disk(dev)) != ident:
+            raise SystemExit("device disappeared or was replaced mid-operation; stopping")
+    same_disk()
+    with open(a.iso, "rb") as f:
+        sector0 = f.read(512)
+    mbr = inspect_iso_mbr(sector0, iso_bytes)                         # re-parse: the file could have changed since plan
+    print(">> writing hybrid ISO raw to", dev)
+    sh(["wipefs", "-a", dev], check=False)
+    p = subprocess.run(["dd", f"if={a.iso}", f"of={dev}", "bs=4M", "conv=fsync", "oflag=direct", "status=none"])
+    if p.returncode:
+        raise SystemExit("dd failed; drive state is undefined")
+    sh(["sync"]); sh(["blockdev", "--flushbufs", dev], check=False)
+    # read back from the device itself (O_DIRECT: not the page cache) and compare with the ISO's checksum
+    h = hashlib.sha256()
+    rb = subprocess.Popen(["dd", f"if={dev}", "bs=4M", "iflag=direct,count_bytes", f"count={iso_bytes}", "status=none"],
+                          stdout=subprocess.PIPE)
+    while c := rb.stdout.read(8 * MiB):
+        h.update(c)
+    rb.wait()
+    ref = want or sha256(a.iso)
+    if rb.returncode or h.hexdigest() != ref:
+        raise SystemExit("ISO read back from the device does NOT match its checksum; do not use this drive")
+    print(">> ISO read back from the device matches", ref)
+    same_disk()
+    # add the data partition: write ONE 16-byte MBR entry into the free slot, leaving boot code and the ISO's entries intact
+    slot, start, size = mbr["free_slot"], l["data_start_sector"], l["data_sectors"]
+    entry = bytes([0, 0xFE, 0xFF, 0xFF, 0x83, 0xFE, 0xFF, 0xFF]) + start.to_bytes(4, "little") + size.to_bytes(4, "little")
+    if start > 0xFFFFFFFF or size > 0xFFFFFFFF:
+        raise SystemExit("drive is larger than an MBR can address (2 TiB); use --layout ventoy (GPT)")
+    with open(dev, "r+b") as f:
+        cur = f.read(512)
+        off = 446 + 16 * slot
+        if cur != sector0 or cur[off:off + 16] != bytes(16):
+            raise SystemExit("MBR on the device is not what was just written; stopping before partitioning")
+        f.seek(off); f.write(entry); f.flush(); os.fsync(f.fileno())
+    sh(["partprobe", dev], check=False); sh(["udevadm", "settle"], check=False); time.sleep(2)
+    same_disk()
+    dpart = part_path(dev, slot + 1)
+    if not os.path.exists(dpart):
+        raise SystemExit(f"data partition node {dpart} did not appear (kernel did not re-read the table)")
+    sh(["mkfs.ext4", "-F", "-L", "VICTORDATA", "-m", "1", "-E", "lazy_itable_init=0", dpart])
+    # the ISO's boot sector and original partition entries must be untouched by the partition add
+    with open(dev, "rb") as f:
+        after = f.read(512)
+    keep = [i for i in range(512) if not (446 + 16 * slot <= i < 446 + 16 * (slot + 1))]
+    if any(after[i] != sector0[i] for i in keep):
+        raise SystemExit("MBR changed outside the new entry; do not use this drive")
+    sh(["sync"])
+    print(subprocess.run(["lsblk", "-o", "NAME,SIZE,FSTYPE,LABEL,UUID", dev], capture_output=True, text=True).stdout)
+    print("DONE: hybrid ISO written raw and verified by read-back; VICTORDATA created. Safe to remove after the OS reports it unmounted.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -331,10 +463,13 @@ def main():
     p = sp.add_parser("plan"); p.add_argument("--device"); p.add_argument("--size-bytes", type=int)
     p.add_argument("--iso", required=True); p.add_argument("--json", action="store_true")
     p.add_argument("--min-data-gib", type=int, default=MIN_DATA // GiB)
+    p.add_argument("--layout", choices=["ventoy", "raw"], default="ventoy")
     p.set_defaults(f=lambda a: cmd_plan(a) and None)
     w = sp.add_parser("write"); w.add_argument("--device", required=True); w.add_argument("--iso", required=True)
     w.add_argument("--confirm", required=True); w.add_argument("--ventoy-dir", default="/opt/ventoy")
     w.add_argument("--allow-unverified-iso", action="store_true")
+    w.add_argument("--layout", choices=["ventoy", "raw"], default="ventoy",
+                   help="ventoy (default, multi-ISO) or raw (hybrid ISO written byte-for-byte + VICTORDATA)")
     w.add_argument("--virtual-test", action="store_true", help="permit /dev/loop* (disposable test images only)")
     w.add_argument("--allow-non-usb", action="store_true", help="permit a non-USB, non-removable disk (dangerous)")
     w.set_defaults(f=cmd_write)
