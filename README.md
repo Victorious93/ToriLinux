@@ -1,4 +1,4 @@
-# ToriLinux (Victorious fork) - portable offline AI workstation on a USB drive
+# VictorLinux - portable offline AI workstation on a USB drive
 
 Arch Linux live image that boots from USB and runs local LLM inference, with first-class support for
 **AMD Radeon GPUs through llama.cpp's Vulkan backend** (target hardware: Radeon RX 6800 XT 16 GB), a local
