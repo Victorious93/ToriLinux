@@ -46,12 +46,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(await page.locator('#rEn').isChecked(), true);
   assert.equal(await page.locator('#rTls').isChecked(), true);
   console.log('PASS polling preserves unsaved remote settings');
-  await page.locator('[data-t="models"]').click(); await page.locator('#sCtx').fill('8192');
+  await page.locator('[data-t="models"]').click();
+  assert.equal(await page.locator('#sCtxAuto').isChecked(), true, 'new installs default to automatic context');
+  assert.equal(await page.locator('#sCtx').isDisabled(), true);
+  await page.locator('#sCtxAuto').uncheck(); assert.equal(await page.locator('#sCtx').isDisabled(), false);
+  await page.locator('#sCtx').fill('8192');
   await page.evaluate(() => refresh()); assert.equal(await page.locator('#sCtx').inputValue(), '8192');
   await page.locator('#bSave').click();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('Settings saved'));
   await page.reload(); await page.waitForFunction(() => document.querySelector('#sCtx').value === '8192');
+  assert.equal(await page.locator('#sCtxAuto').isChecked(), false, 'manual context choice persists');
   console.log('PASS runtime settings save and reload');
+  await page.locator('#bAdvice').click();
+  await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
+  assert.equal(await page.locator('#advice').textContent().then(t => t.includes('Optional catalog (not downloaded)')), true);
+  console.log('PASS host memory pool and ranked-model advice render');
   for (const width of [1366, 768, 390]) {
    await page.setViewportSize({width, height: 900});
    for (const tab of ['dash', 'models', 'storage', 'remote', 'logs']) {
