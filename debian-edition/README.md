@@ -15,7 +15,7 @@ and an optional isolated Kali container.
 | Area | Included |
 |---|---|
 | Base | Debian trixie, kernel `linux-image-amd64` (6.12 LTS series), `firmware-amd-graphics`, `-linux-free`, `-misc-nonfree`, `-realtek`, `-iwlwifi`, CPU microcode |
-| Desktop | Xorg, Xfce 4.20, LightDM autologin to the unprivileged `victor` user, Firefox ESR |
+| Desktop | Xorg, Xfce 4.20, LightDM autologin to the unprivileged `victor` user, Firefox ESR; **dark theme by default** (Adwaita-dark GTK, dark terminal/greeter/Control Center/chat UI) with a light/dark toggle (Control Center → Diagnostics, or `victor-theme dark|light|toggle`); the choice is stored per drive on VICTORDATA |
 | Inference | llama.cpp (pinned commit, see `versions.env`): **Vulkan** (Mesa RADV) + **CPU** (all x86-64 variants, chosen at runtime), HTTPS support compiled in, built-in download disabled |
 | Control | `victor-control` (Tk GUI), `victor-ctl` (CLI behind it), `victor-priv` (single validated root helper), first-run wizard |
 | Dev/diag | git, Python 3 (+venv, pipx, pip), gcc/make, ADB, Fastboot, Nmap, Wireshark, tcpdump |
