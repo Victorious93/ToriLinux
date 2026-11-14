@@ -1,65 +1,63 @@
 #!/bin/bash
-set -eu
+# Image customization, run by mkarchiso inside the image chroot (build time only).
+# Original: ToriLinux (sasha0552, MIT). Reworked by Victorious / Victorious Framework.
+set -euo pipefail
 
-##### ENVIRONMENT VARIABLES #####
-# customize_airootfs temporary directory
 export CUSTOMIZE_AIROOTFS=/root/customize_airootfs
-
-# home directory
 export HOME=/home/tori
-
-# path
 export PATH=$HOME/.local/bin:$PATH
 
-# directory with patches
-export TORI_PATCHES=$HOME/.local/share/tori/patches
-##### ENVIRONMENT VARIABLES #####
+# The 'tori' account has NO password (locked in /etc/shadow). The physical console auto-logs in;
+# network logins are impossible until the owner adds an SSH key (see tori-priv / Control Center).
+# Nothing here may set a shared password.
+passwd -l tori >/dev/null
+passwd -l root >/dev/null
 
-# set user password
-echo "tori:tori" | chpasswd
-
-# remove any jinja2 files in root directory
 find /root -type f -name "*.jinja2" -print -delete
 
+# user and runtime dirs with correct ownership
+install -d -o tori -g tori -m 700 /home/tori /home/tori/.cache/tori
+chown -R tori:tori /home/tori
+
+systemctl disable sshd.service 2>/dev/null || true
+systemctl mask sshd.socket 2>/dev/null || true
+systemctl enable tori-boot-setup.service
+systemctl enable systemd-networkd.service
+
 {% if platform == "cuda" %}
-# download nvidia-pstated
 wget "{{ gh_release("nvidia_pstated") }}" -O "/usr/local/bin/nvidia-pstated"
-
-# mark nvidia-pstated as executable
 chmod +x "/usr/local/bin/nvidia-pstated"
-
-# enable nvidia-persistenced service
 systemctl enable nvidia-persistenced
+systemctl enable nvidia-pstated.service
 {% endif %}
-
-{% if type == "gui" %}
-# enable ly
-systemctl enable ly
-{% endif %}
-
-# install transient-package
-su tori -c "pipx install transient-package"
 
 {% if type != "empty" %}
-# enter home directory
-cd "/home/tori"
+# llama.cpp backends (root, build time)
+for script in "$CUSTOMIZE_AIROOTFS"/root-scripts/*.sh; do
+  echo "===> Executing root script $script"
+  bash "$script"
+done
+rm -rf /root/sources
 
-# execute scripts
-for script in $CUSTOMIZE_AIROOTFS/scripts/*.sh; do
-  # print current script
+# optional packs (as the unprivileged user)
+su tori -c "pipx install transient-package" || true
+cd /home/tori
+for script in "$CUSTOMIZE_AIROOTFS"/scripts/*.sh; do
   echo "===> Executing script $script"
-
-  # add execution permission
   chmod +x "$script"
-
-  # launch script as user
   su tori -c "$script"
-
-  {% if platform == "rocm" %}
-  rdfind -checksum sha256 -makehardlinks true -makeresultsfile false "."
+  {% if "hip" in packs or platform == "amd" %}
+  rdfind -checksum sha256 -makehardlinks true -makeresultsfile false "." >/dev/null
   {% endif %}
 done
 {% endif %}
 
-# remove customize_airootfs temporary directory
+# release stamp shown in diagnostics
+cat > /etc/tori-release <<REL
+Tori Linux (Victorious fork)
+platform={{ platform }} type={{ type }} packs={{ packs|join(",") or "none" }}
+arch_snapshot={{ build.arch_snapshot }}
+$(cat /opt/llama.cpp/BUILDINFO 2>/dev/null || echo "llama.cpp: not included")
+REL
+
 rm -fr "$CUSTOMIZE_AIROOTFS"

@@ -1,0 +1,65 @@
+name: Build ISO
+
+# Builds on infrastructure YOU control: GitHub-hosted runners by default, or any runner label you pass in.
+# No secrets are needed. Build-time internet access is required; the resulting ISO runs offline.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "amd (Vulkan, default) | cuda | rocm (amd + experimental HIP)"
+        default: amd
+        type: choice
+        options: [amd, cuda, rocm]
+      type:
+        description: "headless | gui | empty"
+        default: gui
+        type: choice
+        options: [headless, gui, empty]
+      packs:
+        description: "Optional packs, comma separated (hip,comfyui,automatic,invokeai,sillytavern,vllm). Large; experimental."
+        default: ""
+      runner:
+        description: "Runner label (use a self-hosted label of yours for cuda/hip/packs: they need >14 GB disk)"
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - name: Install git
+        run: pacman -Syu --noconfirm git
+
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned sources
+        run: |
+          git config --global --add safe.directory "$PWD"
+          scripts/prepare-sources.sh
+
+      - name: Build ISO
+        env:
+          WORKDIR: /var/tmp/tori-work
+        run: |
+          args="${{ inputs.platform }} ${{ inputs.type }}"
+          if [ -n "${{ inputs.packs }}" ]; then args="$args --packs ${{ inputs.packs }}"; fi
+          scripts/build-inner.sh $args
+
+      - name: Summary
+        run: |
+          { echo '```'; (cd out && sha256sum ./*.iso); echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: torilinux-${{ inputs.platform }}-${{ inputs.type }}
+          path: |
+            out/*.iso
+            out/*.sha256
+            out/manifest-*.json
+            out/packages-*.txt
+            out/build-*.log

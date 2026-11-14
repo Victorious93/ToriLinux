@@ -1,10 +1,7 @@
 #!/bin/sh
 set -eu
-
-{% if platform == "cuda" %}
-# use repo with patched packages
+{% if "vllm" in packs and platform == "cuda" %}
+# EXPERIMENTAL pack (CUDA only; not needed for the AMD path). Uses the upstream maintainer's patched wheels.
 export PIP_EXTRA_INDEX_URL="https://sasha0552.github.io/pascal-pkgs-ci/"
-
-# install patched vllm
 pipx install vllm-pascal
 {% endif %}

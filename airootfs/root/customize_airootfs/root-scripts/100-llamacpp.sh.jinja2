@@ -1,0 +1,49 @@
+#!/bin/bash
+# Build llama.cpp backends from the pinned, pre-fetched source. Runs as root inside the image chroot.
+# Build-time only: no network access is needed here (source is copied in by scripts/prepare-sources.sh).
+set -euo pipefail
+
+src=/root/sources/llama.cpp
+prefix=/opt/llama.cpp
+[ -f "$src/CMakeLists.txt" ] || { echo "llama.cpp source missing at $src (run scripts/prepare-sources.sh)"; exit 1; }
+jobs=$(nproc)
+
+build_backend() {
+  local name=$1; shift
+  echo "===> llama.cpp backend: $name"
+  cmake -S "$src" -B "/var/tmp/llama-build-$name" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+    -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON "$@"
+  cmake --build "/var/tmp/llama-build-$name" -j"$jobs" --target llama-server llama-bench llama-cli
+  install -d "$prefix/$name/bin"
+  # whole bin dir: executables + libggml*/libllama* + dynamically loaded backends sit together
+  cp -a "/var/tmp/llama-build-$name/bin/." "$prefix/$name/bin/"
+  find "$prefix/$name/bin" -type f \( -perm -u+x -o -name '*.so*' \) -exec strip --strip-unneeded {} + 2>/dev/null || true
+  rm -rf "/var/tmp/llama-build-$name"
+}
+
+# CPU: always present, so there is a visible fallback.
+build_backend cpu
+
+# Vulkan: the primary AMD path (also works on NVIDIA/Intel GPUs with Vulkan drivers).
+build_backend vulkan -DGGML_VULKAN=ON
+
+{% if platform == "cuda" %}
+build_backend cuda -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="{{ build.cuda_architectures }}" \
+  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-12 -DCMAKE_CUDA_COMPILER=/opt/cuda/bin/nvcc
+{% endif %}
+
+{% if "hip" in packs %}
+# ROCm/HIP (experimental). Target: {{ build.hip_targets }} (RDNA2 incl. RX 6800 XT).
+export ROCM_PATH=/opt/rocm
+build_backend hip -DGGML_HIP=ON -DAMDGPU_TARGETS="{{ build.hip_targets }}" \
+  -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++
+{% endif %}
+
+# record exactly what was built
+{
+  echo "llama.cpp revision: $(cat /root/sources/llama.cpp.rev)"
+  echo "backends: $(ls "$prefix" | tr '\n' ' ')"
+} > "$prefix/BUILDINFO"

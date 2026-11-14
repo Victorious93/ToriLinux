@@ -1,10 +1,15 @@
 [Match]
 # Matching with "Type=ether" causes issues with containers because it also matches virtual Ethernet interfaces (veth*).
 # See https://bugs.archlinux.org/task/70892
-# Instead match by globbing the network interface name.
 Name=en*
 Name=eth*
 
 [Network]
 DHCP=yes
-MulticastDNS=yes
+# mDNS responder disabled: nothing on this machine should advertise itself on the LAN unprompted.
+MulticastDNS=no
+LLMNR=no
+
+[DHCPv4]
+# DHCP failure/absence must never delay boot or the offline experience.
+RouteMetric=100

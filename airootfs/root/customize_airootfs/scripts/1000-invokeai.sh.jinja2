@@ -1,7 +1,6 @@
 #!/bin/sh
 set -eu
-
-{% if platform == "cuda" %}
-# install invokeai
+{% if "invokeai" in packs %}
+# EXPERIMENTAL pack (CUDA only): isolated pipx environment
 pipx install InvokeAI
 {% endif %}
