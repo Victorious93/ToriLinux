@@ -46,13 +46,15 @@ no network card attached unless stated).
 * Physical USB flashing (no removable drive was attached), Secure Boot, real firmware/USB-controller quirks, speed of a real stick.
 * The `hip`/ROCm pack: a build was attempted and **failed** (the build host's disk allowance could not hold the ROCm SDK: "could not extract ... rocfft (Write failed)"). Unbuilt, unverified.
 * All image-generation packs (ComfyUI, SD.Next, InvokeAI, SillyTavern, vllm): rendered only, **not built** (download.pytorch.org is unreachable from the build host).
-* Boot of the `gui` and `cuda` images: both ISOs **built** (below) but neither was booted. No NVIDIA GPU was available, so the CUDA backend has not run.
+* Boot of the `cuda` image: built but **not booted**; no NVIDIA GPU was available, so the CUDA backend has not run. It was built *before* the Control Center CSP fix (below) and still contains that bug.
+* The "Problem loading page" second Firefox tab seen in the gui image was not investigated.
 
 ## Additional builds (build-only evidence)
 
 | Image | Size (bytes) | SHA-256 |
 |---|---|---|
-| `torilinux-amd-gui-2026-11-14_06-16-04` | 2,213,314,560 | see `.sha256` / manifest-20261114T061603Z.json |
+| `torilinux-amd-gui-2026-11-14_06-16-04` | 2,213,314,560 | see `.sha256` (superseded: Control Center UI blank, see below) |
+| `torilinux-amd-gui-2026-11-14_09-24-13` | 2,213,314,560 | `d912ffcc74582e944cd62198a0986432ea4309aa226f0f5f69ac44b537c0e2fe` |
 | `torilinux-cuda-gui-2026-11-14_07-02-47` | 5,878,272,000 | `1372441e9b0f0c19a92d0994b366419807d7b0d876e8879b163090e7a797d77b` |
 
 The CUDA image ships cuda 13.4.3 and nvidia-utils 620.70.06 from the pinned Arch snapshot; that driver branch supports Turing and newer only (Pascal dropped). The nvidia-pstated source is now prefetched and sha256-verified on the host (the in-chroot wget TLS failure is fixed).
@@ -60,3 +62,10 @@ The CUDA image ships cuda 13.4.3 and nvidia-utils 620.70.06 from the pinned Arch
 * HTTPS (`tori-tls-cert`) and SSH enable/disable on a booted image (key validation was tested on a host; sshd start was not).
 * Tailscale/Headscale and the DroidCommand-AI app; VictorSuite adapter on a phone.
 * Tool calling with a real tool-capable model.
+
+## GUI image boot test (QEMU, TCG, no GPU, no network)
+
+* Booted `amd-gui-2026-11-14_09-24-13` with a 512 MiB ext4 `TORIDATA` stick attached as USB: reached `running` in ~150 s, 0 failed units, auto-login, Xorg, Openbox, tint2, Firefox, wallpaper; `TORIDATA` mounted, Control Center reported "persistent storage".
+* Control Center in Firefox rendered all five tabs; dashboard showed the CPU-fallback banner and "No GPU detected" (expected in the VM).
+* **Bug found and fixed (PR #3):** the first gui build's Control Center sent `Content-Security-Policy: default-src 'self'`, which blocked its inline `<script>`; Firefox showed only the header. API-only tests had missed it. Fixed with a per-response CSP nonce; `tests/browser_ui.js` (headless Chromium against the real server) fails without the fix and passes with it. The rebuilt image above contains the fix and was booted to confirm.
+* Not covered: Vulkan inference, model load, the Open chat button, real hardware.
