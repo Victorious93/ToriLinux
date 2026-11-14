@@ -115,3 +115,43 @@ def test_plan_uses_auto_context_threads_and_never_reports_gpu_on_cpu(tmp_path, m
     s["ctx_auto"] = False; s["ctx"] = 1234; s["threads"] = 3
     plan = app.plan_llm(s)
     assert plan["ctx"] == 1234 and plan["threads"] == 3
+
+
+def test_companion_report_is_authenticated_read_only_and_secret_free(tmp_path, monkeypatch):
+    monkeypatch.setenv("VICTOR_DATA", str(tmp_path / "data"))
+    run = tmp_path / "run"; run.mkdir()
+    monkeypatch.setattr(gateway.tc, "RUN_DIR", str(run))
+    (run / "host.json").write_text(json.dumps({"backend": "cpu", "device": {"kind": "system", "budget": 123}, "threads_default": 3}))
+    (run / "runtime.json").write_text(json.dumps({"running": True, "model": "/secret/place/model.gguf", "backend": "cpu", "ctx": 4096,
+                                                  "ngl": 0, "verify": {"state": "verified"}}))
+    key = "victor-test-key-1234567890"
+    import hashlib
+    monkeypatch.setattr(gateway.Handler, "cfg", {"require_auth": True, "keys": [hashlib.sha256(key.encode()).hexdigest()],
+                                                 "upstream_port": 1, "upstream_key": "UPSTREAM-SECRET", "max_body": 1024, "tls": False})
+    with serving(gateway.Handler) as port:
+        assert request(port, "GET", "/victor/companion")[0] == 401
+        assert request(port, "GET", "/victor/companion", headers={"Authorization": "Bearer wrong"})[0] == 401
+        ok = {"Authorization": "Bearer " + key}
+        status, raw = request(port, "GET", "/victor/companion", headers=ok)
+        assert status == 200
+        body = json.loads(raw)
+        assert body["schema"] == 1 and body["runtime"]["model"] == "model.gguf"          # basename only
+        assert body["runtime"]["generation_check"] == {"state": "verified"}
+        assert body["hardware"]["memory_pool"] == "system" and body["transport"]["tls"] is False
+        text = raw.decode()
+        for secret in ("/secret/place", "UPSTREAM-SECRET", key):
+            assert secret not in text
+        assert len(body["pc"]["id"]) in (36, 34)
+        # stable across calls, and read-only
+        assert json.loads(request(port, "GET", "/victor/companion", headers=ok)[1])["pc"]["id"] == body["pc"]["id"]
+        assert request(port, "POST", "/victor/companion", {}, ok)[0] == 405
+
+
+def test_companion_pc_id_differs_between_data_stores(tmp_path, monkeypatch):
+    import companion
+    ids = []
+    for n in ("a", "b"):
+        monkeypatch.setenv("VICTOR_DATA", str(tmp_path / n))
+        (tmp_path / n / "config").mkdir(parents=True)
+        ids.append(companion.pc_identity())
+    assert ids[0] != ids[1]

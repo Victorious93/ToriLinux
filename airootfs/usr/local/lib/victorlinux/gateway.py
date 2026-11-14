@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
+import companion  # noqa: E402
 
 OLLAMA_ROUTES = ("/api/version", "/api/tags", "/api/generate", "/api/chat")
 ALLOWED_PREFIXES = ("/v1/", "/completion", "/completions", "/chat/completions", "/models", "/props",
@@ -108,6 +109,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(401, {"error": {"message": "Missing or invalid API key. Send 'Authorization: Bearer <key>'.",
                                               "type": "authentication_error"}},
                               {"WWW-Authenticate": 'Bearer realm="victor"'})
+        if path == "/victor/companion":
+            if self.command != "GET":
+                return self._json(405, {"error": {"message": "read-only endpoint"}}, {"Allow": "GET"})
+            return self._json(200, companion.report(self.cfg))
         if path in ("/victor/capabilities", "/tori/capabilities"):
             return self._json(200, capabilities(self.cfg.get("model_path")))
         if path.startswith("/victor/"):

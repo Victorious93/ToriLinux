@@ -224,8 +224,24 @@ class App:
         if not gw.get("ok"):
             return {"ok": False, "error": "Model started but the API gateway did not: " + gw.get("error", "unknown"),
                     "log": self.tail("gateway", 20)}
+        self.write_runtime(True, {"state": "waiting"})
         threading.Thread(target=self.verify_generation, args=(dict(self.llm_info), key), daemon=True).start()
         return {"ok": True, "plan": self.llm_info}
+
+    def write_runtime(self, running, verify=None):
+        """Volatile, secret-free runtime summary for the gateway's read-only companion report."""
+        path = os.path.join(tc.RUN_DIR, "runtime.json")
+        try:
+            if not running:
+                if os.path.exists(path):
+                    os.unlink(path)
+                return
+            os.makedirs(tc.RUN_DIR, exist_ok=True)
+            i = self.llm_info
+            tc.atomic_write(path, json.dumps({"running": True, "model": i.get("model"), "backend": i.get("backend"),
+                                              "ctx": i.get("ctx"), "ngl": i.get("ngl"), "verify": verify}), 0o644)
+        except OSError:
+            pass
 
     def verify_generation(self, info, key):
         """Mark a model 'verified' only after llama-server really produced a token on this PC."""
@@ -235,6 +251,7 @@ class App:
         for _ in range(120):
             if not self.llm.running():
                 self.llm_verify = {"state": "failed", "error": "llama-server exited before it finished loading."}
+                self.write_runtime(True, {"state": "failed"})
                 return
             try:
                 with urllib.request.urlopen(base + "/health", timeout=2) as r:
@@ -245,6 +262,7 @@ class App:
             time.sleep(1)
         else:
             self.llm_verify = {"state": "failed", "error": "Model did not become ready within 2 minutes."}
+            self.write_runtime(True, {"state": "failed"})
             return
         try:
             req = urllib.request.Request(base + "/v1/chat/completions", method="POST",
@@ -257,12 +275,15 @@ class App:
                 raise ValueError("no choices in response")
         except (OSError, ValueError) as e:
             self.llm_verify = {"state": "failed", "error": f"Loaded but did not generate: {e}"}
+            self.write_runtime(True, {"state": "failed"})
             return
         name = (info.get("device") or {}).get("name")
         hostplan.record_verified(info["model"], info["backend"], name, info["ngl"], info["ctx"])
         self.llm_verify = {"state": "verified", "backend": info["backend"], "device": name}
+        self.write_runtime(True, {"state": "verified"})
 
     def stop_llm(self):
+        self.write_runtime(False)
         with self.lock:
             self.stop(self.llm)
             self.stop(self.gw)
