@@ -1,0 +1,9 @@
+ToriLinux — original work Copyright (c) sasha0552 and contributors, https://github.com/sasha0552/ToriLinux, under the license in LICENSE.
+
+This fork, including the Debian-based "VictorLinux" edition under debian-edition/, contains modifications
+Copyright (c) Victorious / Victorious Framework. Those modifications are provided under the same license as the
+upstream project (see LICENSE) unless a file states otherwise.
+
+Third-party components keep their own licenses:
+  llama.cpp (MIT, ggml-org), Debian packages (their respective licenses, see /usr/share/doc/*/copyright in the image),
+  Ventoy (GPLv3, used unmodified as a separate tool), Kali Linux container image (various, kali.org), podman (Apache-2.0).

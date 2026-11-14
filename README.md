@@ -1,3 +1,8 @@
+> **VictorLinux (Debian edition)** — a Debian 13 "trixie" live-build distribution with Xfce, a verified-GPU-first llama.cpp (Vulkan) runtime,
+> persistent VICTORDATA storage, a Control Center, an authenticated OpenAI-compatible endpoint and an optional isolated Kali container.
+> It lives in [`debian-edition/`](debian-edition/README.md) and is a separate implementation. The Arch implementation below is preserved unchanged.
+> GUI **and** headless variants for both editions are planned (see [roadmap](debian-edition/docs/ROADMAP.md)); today Debian ships the GUI variant only.
+
 # ToriLinux - Linux LiveCD for offline AI training and inference
 
 ![vLLM on ToriLinux](docs/media/vllm-on-torilinux.png)
@@ -10,7 +15,7 @@ LiveCD distribution based on [ArchLinux](https://archlinux.org/) and currently i
 * [SillyTavern](https://github.com/SillyTavern/SillyTavern)
 * [vllm](https://github.com/vllm-project/vllm)
 
-If you would like to see another AI-related project included in ToriLinux, please open an [issue](https://github.com/sasha0552/ToriLinux/issues/new).
+If you would like to see another AI-related project included in ToriLinux, please open an [issue](https://github.com/Victorious93/ToriLinux/issues/new).
 
 ## Features
 
@@ -33,8 +38,8 @@ The following options are currently available:
 
 |        | Headless | With GUI | Empty |
 |--------|----------|----------|-------|
-| NVIDIA | [NVIDIA headless](https://github.com/sasha0552/ToriLinux/actions/workflows/gh-build-iso-cuda.yml?query=branch%3Amain+is%3Asuccess) | [NVIDIA with GUI](https://github.com/sasha0552/ToriLinux/actions/workflows/gh-build-iso-cuda-gui.yml?query=branch%3Amain+is%3Asuccess) | [NVIDIA empty](https://github.com/sasha0552/ToriLinux/actions/workflows/gh-build-iso-cuda-empty.yml?query=branch%3Amain+is%3Asuccess) |
-| AMD | [AMD headless](https://github.com/sasha0552/ToriLinux/actions/workflows/sh-build-iso-rocm.yml?query=branch%3Amain+is%3Asuccess) | [AMD with GUI](https://github.com/sasha0552/ToriLinux/actions/workflows/sh-build-iso-rocm-gui.yml?query=branch%3Amain+is%3Asuccess) | [AMD empty](https://github.com/sasha0552/ToriLinux/actions/workflows/gh-build-iso-rocm-empty.yml?query=branch%3Amain+is%3Asuccess) |
+| NVIDIA | [NVIDIA headless](https://github.com/Victorious93/ToriLinux/actions/workflows/gh-build-iso-cuda.yml?query=branch%3Amain+is%3Asuccess) | [NVIDIA with GUI](https://github.com/Victorious93/ToriLinux/actions/workflows/gh-build-iso-cuda-gui.yml?query=branch%3Amain+is%3Asuccess) | [NVIDIA empty](https://github.com/Victorious93/ToriLinux/actions/workflows/gh-build-iso-cuda-empty.yml?query=branch%3Amain+is%3Asuccess) |
+| AMD | [AMD headless](https://github.com/Victorious93/ToriLinux/actions/workflows/sh-build-iso-rocm.yml?query=branch%3Amain+is%3Asuccess) | [AMD with GUI](https://github.com/Victorious93/ToriLinux/actions/workflows/sh-build-iso-rocm-gui.yml?query=branch%3Amain+is%3Asuccess) | [AMD empty](https://github.com/Victorious93/ToriLinux/actions/workflows/gh-build-iso-rocm-empty.yml?query=branch%3Amain+is%3Asuccess) |
 
 Note: You need to be logged in to GitHub to download artifacts. You can use [nightly.link](https://nightly.link/) to download artifacts without authorization.
 
@@ -46,3 +51,11 @@ Note that following projects is not available on ROCm version:
 * [vllm](https://github.com/vllm-project/vllm)
 
 The server for building the ROCm version is provided by [@Sepera-okeq](https://github.com/Sepera-okeq/).
+
+## Credits and license
+
+ToriLinux is by [sasha0552](https://github.com/sasha0552/ToriLinux) (original project, licensed under the terms in [LICENSE](LICENSE)).
+The Arch ROCm build server was provided by [@Sepera-okeq](https://github.com/Sepera-okeq/).
+The Debian edition ("VictorLinux") and the modifications in this fork are by **Victorious / Victorious Framework**.
+Upstream license notices are retained; see [NOTICE](NOTICE).
+Note: the Arch ROCm workflows still reference the original maintainer's self-hosted runner/secrets and will not run on this fork without your own runner.

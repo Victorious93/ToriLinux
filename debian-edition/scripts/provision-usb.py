@@ -13,7 +13,7 @@ marketed size differ, so every number below is derived at run time.
 `write` never guesses: it requires the exact confirmation string printed by `plan`, which embeds the device's
 model/serial/size identity, and re-reads that identity immediately before writing.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, time
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, time
 
 MiB = 1024 * 1024
 GiB = 1024 * MiB
@@ -24,6 +24,9 @@ ISO_COPIES = 3                   # current + previous (rollback) + incoming upda
 ISO_HEADROOM = 1 * GiB
 MIN_SPARE = 256 * MiB            # left unallocated at the end (flash wear-levelling / future use)
 SPARE_FRACTION = 0.01
+
+
+ALLOW_LOOP = False   # set only by --virtual-test, for disposable loop-device images
 
 
 class Rejected(Exception):
@@ -120,10 +123,20 @@ def mounts_of(disk):
     return m
 
 
+SYSTEM_MOUNT_PREFIXES = ("/boot", "/usr", "/var", "/etc", "/opt", "/home", "/srv", "/nix", "/snap", "/root", "/proc", "/sys")
+ALLOW_NON_USB = False   # --allow-non-usb: explicit override for internal/virtual disks
+
+
 def protected_reasons(disk, paths):
-    """Why this disk must NOT be a target: backs / (or any given path), or is not a plain disk."""
+    """Why this disk must NOT be a target: system mounts, backs a required path, not a plain disk, not USB/removable."""
     reasons = []
-    if disk.get("type") != "disk":
+    tran = (disk.get("tran") or "").lower()
+    if not ALLOW_NON_USB and not (ALLOW_LOOP and disk.get("type") == "loop") and tran != "usb" and not disk.get("rm"):
+        reasons.append(f"not a USB/removable device (transport={tran or 'unknown'}); use --allow-non-usb only if you are sure")
+    for mp in mounts_of(disk):
+        if mp == "/" or mp == "[SWAP]" or mp.startswith(SYSTEM_MOUNT_PREFIXES):
+            reasons.append(f"has system mount {mp}")
+    if disk.get("type") != "disk" and not (ALLOW_LOOP and disk.get("type") == "loop"):
         reasons.append("not a whole disk")
     mps = mounts_of(disk)
     if "/" in mps or "/boot" in mps or "/boot/efi" in mps or "[SWAP]" in mps:
@@ -214,9 +227,21 @@ def sha256(path):
     return h.hexdigest()
 
 
+REQUIRED_TOOLS = ["lsblk", "sfdisk", "partprobe", "udevadm", "mkfs.ext4", "mount", "umount", "cp", "sync", "bash", "blkid"]
+
+
+def require_tools():
+    os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/sbin:/sbin:/usr/local/sbin"
+    missing = [t for t in REQUIRED_TOOLS if not shutil.which(t)]
+    if missing:
+        raise SystemExit("missing required tools (checked BEFORE any write): " + ", ".join(missing) +
+                         "  -> apt install util-linux parted e2fsprogs udev")
+
+
 def cmd_write(a):
     if os.geteuid() != 0:
         raise SystemExit("write needs root")
+    require_tools()
     iso_sha_file = a.iso + ".sha256"
     want = None
     if os.path.exists(iso_sha_file):
@@ -276,7 +301,13 @@ def cmd_write(a):
     vpart = part_path(dev, 1)
     mp = f"/run/victor-provision-{os.getpid()}"
     os.makedirs(mp)
-    sh(["mount", vpart, mp])
+    m = sh(["mount", "-t", "exfat", vpart, mp], check=False)
+    if m.returncode:   # kernels without the exfat driver: use the FUSE implementation if installed
+        if shutil.which("mount.exfat-fuse"):
+            sh(["mount", "-t", "exfat-fuse", vpart, mp])
+        else:
+            raise SystemExit("cannot mount the exFAT Ventoy partition (no kernel exfat driver; install exfat-fuse). "
+                             "Ventoy and the data partition were written; copy the ISO manually and verify its sha256.")
     try:
         dst = os.path.join(mp, os.path.basename(a.iso))
         sh(["cp", a.iso, dst]); sh(["sync"])
@@ -303,8 +334,15 @@ def main():
     p.set_defaults(f=lambda a: cmd_plan(a) and None)
     w = sp.add_parser("write"); w.add_argument("--device", required=True); w.add_argument("--iso", required=True)
     w.add_argument("--confirm", required=True); w.add_argument("--ventoy-dir", default="/opt/ventoy")
-    w.add_argument("--allow-unverified-iso", action="store_true"); w.set_defaults(f=cmd_write)
+    w.add_argument("--allow-unverified-iso", action="store_true")
+    w.add_argument("--virtual-test", action="store_true", help="permit /dev/loop* (disposable test images only)")
+    w.add_argument("--allow-non-usb", action="store_true", help="permit a non-USB, non-removable disk (dangerous)")
+    w.set_defaults(f=cmd_write)
     a = ap.parse_args()
+    global ALLOW_LOOP
+    ALLOW_LOOP = bool(getattr(a, "virtual_test", False))
+    global ALLOW_NON_USB
+    ALLOW_NON_USB = bool(getattr(a, "allow_non_usb", False))
     if a.cmd == "plan" and bool(a.device) == bool(a.size_bytes):
         ap.error("plan needs exactly one of --device / --size-bytes")
     a.f(a)

@@ -8,9 +8,6 @@ set -Eeuo pipefail
 getent group victor-admin >/dev/null || groupadd -r victor-admin
 id victor >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash -c "VictorLinux owner" victor
 passwd -l victor >/dev/null
-for g in audio video render plugdev netdev users dialout cdrom wireshark adbusers victor-admin; do
-  getent group "$g" >/dev/null && usermod -aG "$g" victor || true
-done
 # NOTE: deliberately NOT in group "sudo". Privileged actions go through /usr/local/lib/victorlinux/victor-priv.
 install -d -m 0750 -o victor -g victor /home/victor
 echo "victorlinux" > /etc/hostname
@@ -39,7 +36,15 @@ rm -f /etc/systemd/system/*.wants/victor-llama.service
 
 # --- wireshark/tcpdump: file capabilities, group-restricted (no root GUI)
 echo "wireshark-common wireshark-common/install-setuid boolean true" | debconf-set-selections
-dpkg-reconfigure -f noninteractive wireshark-common || true
+dpkg-reconfigure -f noninteractive wireshark-common
+getent group wireshark >/dev/null || { echo "wireshark group missing" >&2; exit 1; }
+# group membership AFTER packages/reconfigure so every group exists; required ones must succeed
+for g in audio video render plugdev netdev users dialout cdrom wireshark victor-admin; do
+  getent group "$g" >/dev/null || { echo "required group $g missing" >&2; exit 1; }
+  usermod -aG "$g" victor
+done
+getent group adbusers >/dev/null && usermod -aG adbusers victor || true
+id victor | grep -q wireshark || { echo "victor not in wireshark" >&2; exit 1; }
 # adb: udev rules ship with android-sdk-platform-tools-common (group plugdev/adbusers)
 
 # --- sudoers: only the narrow helper is passwordless; everything else needs the owner password

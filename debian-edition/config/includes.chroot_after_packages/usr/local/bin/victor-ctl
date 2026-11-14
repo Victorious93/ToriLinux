@@ -84,7 +84,7 @@ def main():
             elif a.cmd == "stop": out(a, llama.stop())
             elif a.cmd == "status": out(a, llama.status())
             else:
-                c = llama.load_config()
+                c = llama.load_config(); old = json.loads(json.dumps(c))
                 for kv in a.set:
                     k, v = kv.split("=", 1); path = k.split(".")
                     t = c
@@ -92,9 +92,12 @@ def main():
                     old = t[path[-1]]
                     t[path[-1]] = (v.lower() in ("1", "true", "yes", "on")) if isinstance(old, bool) else type(old)(v)
                 if a.set:
-                    if c["remote"]["enabled"] != llama.load_config()["remote"]["enabled"] or c["bind"] != llama.load_config()["bind"]:
-                        priv("fw-sync", str(c["port"]), c["bind"], "1" if c["remote"]["enabled"] else "0")
-                    llama.save_config(c)
+                    llama.save_config(c)          # validates (bind/TLS/remote policy) before anything privileged happens
+                    was, now = old["remote"]["enabled"], c["remote"]["enabled"]
+                    if was and (not now or old["port"] != c["port"] or old["bind"] != c["bind"]):
+                        priv("fw-sync", str(old["port"]), old["bind"], "0")
+                    if now and (not was or old["port"] != c["port"] or old["bind"] != c["bind"]):
+                        priv("fw-sync", str(c["port"]), c["bind"], "1")
                 out(a, c)
         elif a.grp == "api":
             if a.cmd == "connection": out(a, api.connection_info(a.reveal_key))

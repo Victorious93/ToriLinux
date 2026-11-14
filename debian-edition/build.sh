@@ -21,7 +21,10 @@ case "$PROFILE" in amd|nvidia) ;; *) echo "profile must be amd or nvidia" >&2; e
 [ "$(id -u)" -eq 0 ] || { echo "must run as root (live-build uses chroot/mount)" >&2; exit 1; }
 
 # shellcheck source=versions.env
+_mirror_override="${DEBIAN_MIRROR:-}"; _sec_override="${DEBIAN_SECURITY_MIRROR:-}"
 set -a; . "$HERE/versions.env"; set +a
+[ -n "$_mirror_override" ] && DEBIAN_MIRROR="$_mirror_override"
+[ -n "$_sec_override" ] && DEBIAN_SECURITY_MIRROR="$_sec_override"   # e.g. a local mirror/cache you control
 for t in lb debootstrap xorriso mksquashfs git sha256sum; do
   command -v "$t" >/dev/null || { echo "missing prerequisite: $t (apt install live-build debootstrap xorriso squashfs-tools git)" >&2; exit 1; }
 done
@@ -49,7 +52,7 @@ lb config noauto \
   --image-name "$IMAGE_NAME" --apt-indices false --apt-recommends false \
   --win32-loader false --memtest none --checksums none \
   --linux-flavours amd64 --compression xz \
-  --bootappend-live "boot=live components noroot username=victor hostname=victorlinux locales=en_US.UTF-8 keyboard-layouts=us timezone=UTC nopersistence quiet splash"
+  --bootappend-live "boot=live components noroot username=victor hostname=victorlinux locales=en_US.UTF-8 keyboard-layouts=us timezone=UTC nopersistence quiet"
 
 # static config tree
 cp -a "$HERE/config/package-lists/." config/package-lists/
@@ -64,6 +67,15 @@ rm -f config/package-lists/*.nvidia
 install -d config/includes.chroot_after_packages/usr/share/victorlinux
 cp "$HERE/versions.env" config/includes.chroot_after_packages/usr/share/victorlinux/versions.env
 echo "$PROFILE" > config/includes.chroot_after_packages/usr/share/victorlinux/profile
+# Optional: build hosts behind a TLS-intercepting proxy. EXTRA_CA_BUNDLE=/path/ca.pem [BUILD_HTTPS_PROXY=url]
+# The material is used only inside the chroot during the build and removed by hook 9999 (never shipped).
+if [ -n "${EXTRA_CA_BUNDLE:-}" ]; then
+  d=config/includes.chroot_after_packages/usr/share/victorlinux; install -d "$d"
+  install -m 0644 "$EXTRA_CA_BUNDLE" "$d/build-ca.crt"
+  { echo "export GIT_SSL_CAINFO=/usr/share/victorlinux/build-ca.crt SSL_CERT_FILE=/usr/share/victorlinux/build-ca.crt"
+    [ -n "${BUILD_HTTPS_PROXY:-}" ] && echo "export https_proxy='$BUILD_HTTPS_PROXY' HTTPS_PROXY='$BUILD_HTTPS_PROXY'"
+    true; } > "$d/build-env"; chmod 0600 "$d/build-env"
+fi
 # generated-file hygiene: executable bits + syntax checks before spending an hour building
 "$HERE/scripts/check-sources.sh" config
 

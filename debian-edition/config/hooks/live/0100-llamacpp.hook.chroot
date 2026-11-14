@@ -2,8 +2,10 @@
 # Build llama.cpp (pinned commit) with Vulkan + CPU backends inside the image chroot (BUILD-time network only).
 set -Eeuo pipefail
 . /usr/share/victorlinux/versions.env
+[ -f /usr/share/victorlinux/build-env ] && . /usr/share/victorlinux/build-env
 export DEBIAN_FRONTEND=noninteractive
 BUILD_DEPS="build-essential cmake ninja-build git ca-certificates pkg-config libvulkan-dev glslc spirv-headers libssl-dev libshaderc-dev"
+dpkg-query -W -f='${Package}\n' | sort > /tmp/pkgs.before
 apt-get update
 apt-get install -y --no-install-recommends $BUILD_DEPS
 src=/tmp/llama.cpp
@@ -30,6 +32,10 @@ mkdir -p /usr/share/victorlinux
 find /opt/victorlinux/llama.cpp -type f \( -name '*.so*' -o -perm -u+x \) -exec strip --strip-unneeded {} + 2>/dev/null || true
 /opt/victorlinux/llama.cpp/bin/llama-server --version 2>&1 | head -3 || true
 cd /; rm -rf "$src"
-apt-get purge -y $BUILD_DEPS || true
+# purge only packages THIS hook added (git, ca-certificates, gcc, make etc. are part of the image and must stay)
+dpkg-query -W -f='${Package}\n' | sort > /tmp/pkgs.after
+to_purge="$(comm -13 /tmp/pkgs.before /tmp/pkgs.after | grep -x -F -f <(echo $BUILD_DEPS | tr ' ' '\n') || true)"
+[ -z "$to_purge" ] || apt-get purge -y $to_purge
 apt-get autoremove -y --purge
 apt-get clean
+for must in git gcc make libvulkan1 libssl3t64; do dpkg -s "$must" >/dev/null 2>&1 || { echo "required package $must was removed" >&2; exit 1; }; done

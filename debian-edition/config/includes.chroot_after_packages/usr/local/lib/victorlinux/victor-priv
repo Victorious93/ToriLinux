@@ -33,6 +33,16 @@ def link_root(target):
     if os.path.islink(ROOT_LINK) or os.path.exists(ROOT_LINK):
         os.unlink(ROOT_LINK)
     os.symlink(target, ROOT_LINK)
+    # convenient, discoverable entry point for the owner's files (lives on the data partition)
+    home = f"/home/{OWNER}/VictorData"
+    try:
+        if os.path.islink(home):
+            os.unlink(home)
+        if not os.path.exists(home):
+            os.symlink(ROOT_LINK, home)
+            os.lchown(home, *uid_gid())
+    except OSError:
+        pass
 
 
 def selected_file():
