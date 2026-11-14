@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fetch pinned third-party sources BEFORE the image build (build-time internet needed here, not at boot).
+# Verifies the llama.cpp tag still resolves to the pinned commit and records the SHA for the manifest.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+opt() { python3 - "$1" "$2" <<'PY'
+import configparser, sys
+c = configparser.ConfigParser(); c.read(".ci/options.ini"); print(c[sys.argv[1]][sys.argv[2]])
+PY
+}
+
+dest=airootfs/root/sources
+rm -rf "$dest"; mkdir -p "$dest"
+repo=$(opt repositories llamacpp); tag=$(opt revisions llamacpp); want=$(opt revisions llamacpp_commit)
+
+echo "==> cloning llama.cpp $tag"
+git clone --quiet --depth 1 --branch "$tag" "$repo.git" "$dest/llama.cpp"
+got=$(git -C "$dest/llama.cpp" rev-parse HEAD)
+if [ "$got" != "$want" ]; then
+  echo "ERROR: tag $tag now resolves to $got but .ci/options.ini pins $want (tag moved?). Refusing to build." >&2
+  exit 1
+fi
+echo "$got" > "$dest/llama.cpp.rev"
+rm -rf "$dest/llama.cpp/.git"
+
+# llama-server's embedded Web UI ("Open chat"). The llama.cpp build would otherwise download it from Hugging Face
+# at compile time, which fails in a sandboxed chroot and leaves the server without a UI. Pre-fetch + verify here.
+ui_base="https://huggingface.co/buckets/ggml-org/llama-ui/resolve/$tag"
+ui_tmp=$(mktemp -d)
+curl -fsSL -o "$ui_tmp/dist.tar.gz.sha256" "$ui_base/dist.tar.gz.sha256?download=true"
+curl -fsSL -o "$ui_tmp/dist.tar.gz" "$ui_base/dist.tar.gz?download=true"
+want_ui=$(awk '{print $1}' "$ui_tmp/dist.tar.gz.sha256")
+got_ui=$(sha256sum "$ui_tmp/dist.tar.gz" | awk '{print $1}')
+[ "$want_ui" = "$got_ui" ] || { echo "ERROR: llama UI bundle checksum mismatch" >&2; exit 1; }
+mkdir -p "$dest/llama.cpp/tools/ui/dist"
+tar -xzf "$ui_tmp/dist.tar.gz" -C "$dest/llama.cpp/tools/ui/dist"
+[ -f "$dest/llama.cpp/tools/ui/dist/index.html" ] || { echo "ERROR: UI bundle has no index.html" >&2; exit 1; }
+echo "$got_ui" > "$dest/llama.cpp.ui.sha256"
+rm -rf "$ui_tmp"
+echo "llama UI bundle $got_ui"
+
+# nvidia-pstated (CUDA platform only uses it): fetched here so the chroot needs no TLS/network access.
+ps_url="$(opt repositories nvidia_pstated)/releases/download/$(opt revisions nvidia_pstated)/$(opt files nvidia_pstated)"
+curl -fsSL -o "$dest/nvidia-pstated" "$ps_url"
+chmod +x "$dest/nvidia-pstated"
+sha256sum "$dest/nvidia-pstated" | awk '{print $1}' > "$dest/nvidia-pstated.sha256"
+echo "nvidia-pstated $(cat "$dest/nvidia-pstated.sha256")"
+echo "llama.cpp $tag = $got"

@@ -1,68 +1,92 @@
+# Base system
 amd-ucode
 base
 base-devel
 btop
-ccache
+
 cmake
 curl
-darkhttpd
 dkms
+e2fsprogs
+exfatprogs
 ffmpeg
-gcc12
-gdb
 git
+gptfdisk
 grml-zsh-config
 htop
 intel-ucode
+jq
 less
 linux
 linux-firmware
 linux-headers
+lsof
 mkinitcpio
 mkinitcpio-archiso
 mkinitcpio-nfs-utils
 nano
+nbd
 ncdu
-neofetch
+fastfetch
 net-tools
 nfs-utils
+ninja
 nodejs
 npm
 ntfs-3g
 nvtop
 openssh
-progress
+openssl
+parted
+pciutils
 pv
+python
 python-pip
 python-pipx
 qemu-guest-agent
 rdfind
 reptyr
 screen
-sshpass
 strace
 sudo
 syslinux
+usbutils
 wget
 zsh
+{% if type != "empty" %}
 
-{% if platform == "cuda" %}
-# CUDA
-cuda
-nvidia
-nvidia-utils
+# llama.cpp build (kept in the image so a custom build can be redone offline) and Vulkan runtime
+shaderc
+spirv-headers
+vulkan-headers
+vulkan-icd-loader
+vulkan-tools
+vulkan-radeon
+mesa
 {% endif %}
 
-{% if platform == "rocm" %}
-# ROCm
+{% if platform == "cuda" %}
+# NVIDIA / CUDA (current drivers + CUDA 13 support Turing and newer; Pascal/Volta are NOT supported by this snapshot)
+cuda
+nvidia-open
+nvidia-utils
+gcc15
+{% endif %}
+
+{% if platform == "amd" %}
+# AMD: kernel amdgpu + firmware come from linux/linux-firmware; Vulkan (RADV) from vulkan-radeon
+{% endif %}
+
+{% if "hip" in packs %}
+# ROCm / HIP pack (experimental)
 rocm-hip-sdk
 {% endif %}
 
 {% if type == "gui" %}
 # GUI
 feh
-ly
-obconf
+firefox
+konsole
 openbox
 tint2
 ttf-dejavu
@@ -70,12 +94,4 @@ ttf-liberation
 xclip
 xorg
 xorg-xinit
-
-# GUI applications
-firefox
-kmahjongg
-kmines
-konsole
-kpat
-ksudoku
 {% endif %}

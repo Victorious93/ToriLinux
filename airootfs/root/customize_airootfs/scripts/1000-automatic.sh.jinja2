@@ -1,29 +1,15 @@
 #!/bin/bash
 set -eu
-
-# clone repository
+{% if "automatic" in packs %}
+# EXPERIMENTAL pack (SD.Next): revision unchanged from upstream ToriLinux, not re-verified.
 git clone "{{ repositories.automatic }}.git"
-
-# automatic patches
 pushd "automatic"
-  # use specific revision
   git checkout "{{ revisions.automatic }}"
-
-  # create branch
   git checkout -b tori
-
-  # clone submodules
   git submodule update --init --recursive
-popd
-
-# automatic dependencies
-pushd "automatic"
-  # create venv
   python3 -m venv venv
-
-  # activate venv
   source venv/bin/activate
-    # install dependencies
     python3 launch.py --test
   deactivate
 popd
+{% endif %}

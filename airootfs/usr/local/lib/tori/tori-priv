@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Restricted privileged helper for ToriLinux (run via `sudo -n`, as root).
+
+This is the ONLY thing the unprivileged 'tori' user may run as root (see
+/etc/sudoers.d/10-tori). Every sub-command validates its arguments strictly;
+nothing here evaluates shell strings or accepts arbitrary paths/commands.
+"""
+import ipaddress
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+RUN = "/run/tori"
+STATE = f"{RUN}/persist.json"
+DATA_MNT = "/mnt/toridata"
+RO_BASE = "/mnt/tori-ro"
+TEMP = "/run/tori-temp-data"
+USER = "tori"
+SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs", "server")
+UUID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z\-]{3,63}$")        # ext4 UUIDs, FAT/exFAT serials, NTFS serials
+PERSIST_FS = ("ext4", "ext3", "ext2", "btrfs", "xfs", "f2fs")        # need POSIX ownership/permissions
+RO_FS = PERSIST_FS + ("exfat", "ntfs", "vfat")
+# block-device types that may carry a filesystem ("disk" = filesystem directly on the whole device, no partition table)
+FS_TYPES = ("part", "disk", "loop", "crypt", "lvm")
+SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-tori.conf"
+KEYS = f"/home/{USER}/.ssh/authorized_keys"
+KEY_TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+             "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com")
+
+
+def die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd, **kw):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
+
+
+def write_state(d):
+    os.makedirs(RUN, exist_ok=True)
+    os.chmod(RUN, 0o755)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, STATE)
+
+
+def boot_devices():
+    """Devices backing the live medium - never offered as storage or touched."""
+    devs = set()
+    for mp in ("/run/archiso/bootmnt", "/run/archiso/copytoram"):
+        r = run(["findmnt", "-n", "-o", "SOURCE", "--target", mp])
+        if r.returncode == 0 and r.stdout.strip().startswith("/dev/"):
+            devs.add(os.path.realpath(r.stdout.strip()))
+    return devs
+
+
+def lsblk():
+    r = run(["lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,UUID,LABEL,FSTYPE,SIZE,MOUNTPOINTS,RM,TRAN,MODEL,SERIAL,PKNAME,RO"])
+    if r.returncode != 0:
+        die("lsblk failed: " + r.stderr)
+    devs = json.loads(r.stdout)["blockdevices"]
+    # lsblk depends on the udev database; fall back to probing the device directly so that
+    # detection still works early in boot or inside minimal environments.
+    for d in flatten(devs):
+        if d["type"] in FS_TYPES and not d.get("fstype"):
+            b = run(["blkid", "-o", "export", d["path"]])
+            if b.returncode == 0:
+                kv = dict(l.split("=", 1) for l in b.stdout.splitlines() if "=" in l)
+                d["fstype"], d["uuid"], d["label"] = kv.get("TYPE"), kv.get("UUID"), kv.get("LABEL")
+    return devs
+
+
+def flatten(devs, parent=None):
+    for d in devs:
+        d["_parent"] = parent
+        yield d
+        yield from flatten(d.get("children") or [], d)
+
+
+def part_by_uuid(uuid):
+    if not UUID_RE.match(uuid or ""):
+        die("Invalid UUID format.")
+    for d in flatten(lsblk()):
+        if d.get("uuid") and d["uuid"].lower() == uuid.lower() and d["type"] in FS_TYPES and d.get("fstype"):
+            return d
+    die("No filesystem with that UUID was found.")
+
+
+def is_boot_dev(d):
+    bd = boot_devices()
+    p = d
+    while p:
+        if os.path.realpath(p["path"]) in bd:
+            return True
+        p = p.get("_parent")
+    return False
+
+
+def mounted_at(path):
+    return run(["mountpoint", "-q", path]).returncode == 0
+
+
+def ensure_tree(root):
+    pw = pwd.getpwnam(USER)
+    for s in SUBDIRS:
+        p = os.path.join(root, s)
+        os.makedirs(p, exist_ok=True)
+        os.chown(p, pw.pw_uid, pw.pw_gid)
+    os.chmod(os.path.join(root, "config"), 0o700)
+    os.chmod(root, 0o755)
+    os.chown(root, pw.pw_uid, pw.pw_gid)
+
+
+def link_home(root):
+    link = f"/home/{USER}/tori-data"
+    try:
+        if os.path.islink(link) or os.path.exists(link):
+            os.unlink(link)
+        os.symlink(root, link)
+        pw = pwd.getpwnam(USER)
+        os.lchown(link, pw.pw_uid, pw.pw_gid)
+    except OSError:
+        pass
+
+
+def cmd_list_storage(_a):
+    out = []
+    for d in flatten(lsblk()):
+        if d["type"] not in FS_TYPES or not d.get("fstype") or d["fstype"] in ("swap", "iso9660", "squashfs"):
+            continue
+        if is_boot_dev(d):
+            continue
+        par = d.get("_parent") or d
+        out.append({"path": d["path"], "uuid": d.get("uuid"), "label": d.get("label"), "fstype": d["fstype"],
+                    "size": int(d["size"] or 0), "removable": bool(d.get("rm") or par.get("rm")),
+                    "transport": par.get("tran"), "model": (par.get("model") or "").strip(), "serial": par.get("serial"),
+                    "mountpoints": [m for m in (d.get("mountpoints") or []) if m],
+                    "persist_ok": d["fstype"] in PERSIST_FS, "ro_ok": d["fstype"] in RO_FS})
+    print(json.dumps({"partitions": out, "state": json.load(open(STATE)) if os.path.exists(STATE) else None}))
+
+
+def cmd_persist_mount(a):
+    if len(a) != 1:
+        die("usage: persist-mount UUID")
+    d = part_by_uuid(a[0])
+    if is_boot_dev(d):
+        die("Refusing: that is the live boot medium's own boot partition.")
+    if d["fstype"] not in PERSIST_FS:
+        die(f"Filesystem '{d['fstype']}' cannot hold Linux permissions. Use ext4 (label TORIDATA) for persistent storage.")
+    if mounted_at(DATA_MNT):
+        run(["umount", DATA_MNT])
+    os.makedirs(DATA_MNT, exist_ok=True)
+    r = run(["mount", "-o", "rw,nosuid,nodev,noexec,noatime", d["path"], DATA_MNT])
+    if r.returncode != 0:
+        write_state({"mode": "error", "uuid": a[0], "data_root": None, "message": "Mount failed: " + r.stderr.strip()})
+        die("Mount failed: " + r.stderr.strip())
+    root = os.path.join(DATA_MNT, "tori")
+    try:
+        os.makedirs(root, exist_ok=True)
+        probe = os.path.join(root, ".write-test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.unlink(probe)
+        ensure_tree(root)
+    except OSError as e:
+        run(["umount", DATA_MNT])
+        write_state({"mode": "readonly", "uuid": a[0], "data_root": None,
+                     "message": f"Storage is mounted but not writable ({e}). It may be read-only, full or damaged. "
+                                "Fix it from another system, or start an explicit temporary session."})
+        die(f"Storage not writable: {e}")
+    link_home(root)
+    write_state({"mode": "persistent", "uuid": a[0], "device": d["path"], "label": d.get("label"),
+                 "fstype": d["fstype"], "data_root": root, "message": f"Persistent storage active on {d['path']} ({d.get('label') or a[0]})."})
+    print("persistent storage mounted at " + root)
+
+
+def cmd_persist_auto(_a):
+    cands = [d for d in flatten(lsblk()) if d.get("label") == "TORIDATA" and d.get("fstype") in PERSIST_FS and not is_boot_dev(d)]
+    if not cands:
+        write_state({"mode": "missing", "data_root": None,
+                     "message": "No persistent storage found (expected an ext4 partition labelled TORIDATA). "
+                                "Nothing will be saved across reboots unless you pick storage or explicitly start a temporary session."})
+        print("missing")
+        return
+    if len(cands) > 1:
+        write_state({"mode": "ambiguous", "data_root": None,
+                     "message": "Several partitions are labelled TORIDATA; refusing to guess. Choose one explicitly."})
+        print("ambiguous")
+        return
+    cmd_persist_mount([cands[0]["uuid"]])
+
+
+def cmd_persist_temp(_a):
+    os.makedirs(TEMP, exist_ok=True)
+    ensure_tree(TEMP)
+    link_home(TEMP)
+    write_state({"mode": "temporary", "data_root": TEMP,
+                 "message": "TEMPORARY SESSION: everything saved (models, chats, settings) lives in RAM and is lost on reboot."})
+    print("temporary session active")
+
+
+def cmd_mount_ro(a):
+    if len(a) != 1:
+        die("usage: mount-ro UUID")
+    d = part_by_uuid(a[0])
+    if is_boot_dev(d):
+        die("Refusing: live boot medium.")
+    if d["fstype"] not in RO_FS:
+        die(f"Unsupported filesystem '{d['fstype']}'.")
+    mp = os.path.join(RO_BASE, re.sub(r"[^0-9A-Za-z\-]", "", a[0]))
+    os.makedirs(mp, exist_ok=True)
+    if not mounted_at(mp):
+        fs = "ntfs3" if d["fstype"] == "ntfs" else d["fstype"]
+        r = run(["mount", "-t", fs, "-o", "ro,nosuid,nodev,noexec", d["path"], mp])
+        if r.returncode != 0:
+            die("Mount failed: " + r.stderr.strip())
+    print(mp)
+
+
+def cmd_ssh_status(_a):
+    keys = 0
+    if os.path.exists(KEYS):
+        keys = len([l for l in open(KEYS) if l.strip() and not l.startswith("#")])
+    active = run(["systemctl", "is-active", "sshd"]).stdout.strip()
+    listen = None
+    if os.path.exists(SSHD_DROPIN):
+        m = re.search(r"^ListenAddress (\S+)", open(SSHD_DROPIN).read(), re.M)
+        listen = m.group(1) if m else None
+    print(json.dumps({"active": active == "active", "authorized_keys": keys, "listen": listen}))
+
+
+def cmd_ssh_add_key(_a):
+    line = sys.stdin.read().strip()
+    if "\n" in line or not line:
+        die("Provide exactly one public key line.")
+    if line.split()[0] not in KEY_TYPES:
+        die("Unsupported key type or key options present. Paste a plain public key (ssh-ed25519 ...).")
+    if len(line) > 4096:
+        die("Key too long.")
+    tmp = f"{RUN}/key.pub"
+    os.makedirs(RUN, exist_ok=True)
+    with open(tmp, "w") as f:
+        f.write(line + "\n")
+    r = run(["ssh-keygen", "-l", "-f", tmp])
+    os.unlink(tmp)
+    if r.returncode != 0:
+        die("That is not a valid SSH public key.")
+    pw = pwd.getpwnam(USER)
+    d = os.path.dirname(KEYS)
+    os.makedirs(d, exist_ok=True)
+    os.chown(d, pw.pw_uid, pw.pw_gid)
+    os.chmod(d, 0o700)
+    with open(KEYS, "a") as f:
+        f.write(line + "\n")
+    os.chown(KEYS, pw.pw_uid, pw.pw_gid)
+    os.chmod(KEYS, 0o600)
+    print("Key added: " + r.stdout.strip())
+
+
+def cmd_ssh_enable(a):
+    if len(a) != 1:
+        die("usage: ssh-enable LISTEN_ADDRESS")
+    try:
+        addr = str(ipaddress.ip_address(a[0]))
+    except ValueError:
+        die("Listen address must be an IP address.")
+    if not os.path.exists(KEYS) or not open(KEYS).read().strip():
+        die("Add an SSH public key first. Password logins are not supported.")
+    os.makedirs(os.path.dirname(SSHD_DROPIN), exist_ok=True)
+    with open(SSHD_DROPIN, "w") as f:
+        f.write(f"ListenAddress {addr}\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
+                f"PermitRootLogin no\nAllowUsers {USER}\nAuthenticationMethods publickey\nX11Forwarding no\n")
+    run(["ssh-keygen", "-A"])
+    r = run(["systemctl", "restart", "sshd"])
+    if r.returncode != 0:
+        die("sshd failed to start: " + r.stderr.strip())
+    fp = run(["ssh-keygen", "-l", "-f", "/etc/ssh/ssh_host_ed25519_key.pub"]).stdout.strip()
+    print(f"SSH enabled on {addr}:22 (key auth only). Host key: {fp}")
+
+
+def cmd_ssh_disable(_a):
+    run(["systemctl", "stop", "sshd"])
+    print("SSH stopped. Authorized keys kept; use ssh-reset to remove them.")
+
+
+def cmd_ssh_reset(_a):
+    run(["systemctl", "stop", "sshd"])
+    for p in (SSHD_DROPIN, KEYS):
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
+    print("SSH stopped, all authorized keys and listen settings removed.")
+
+
+def cmd_power(a):
+    if a not in (["reboot"], ["poweroff"]):
+        die("usage: power reboot|poweroff")
+    os.execvp("systemctl", ["systemctl", a[0]])
+
+
+COMMANDS = {"list-storage": cmd_list_storage, "persist-mount": cmd_persist_mount, "persist-auto": cmd_persist_auto,
+            "persist-temp": cmd_persist_temp, "mount-ro": cmd_mount_ro, "ssh-status": cmd_ssh_status,
+            "ssh-add-key": cmd_ssh_add_key, "ssh-enable": cmd_ssh_enable, "ssh-disable": cmd_ssh_disable,
+            "ssh-reset": cmd_ssh_reset, "power": cmd_power}
+
+
+def main():
+    if os.geteuid() != 0:
+        die("must run as root (via sudo)")
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        die("usage: tori-priv {" + "|".join(COMMANDS) + "} ...")
+    COMMANDS[sys.argv[1]](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()

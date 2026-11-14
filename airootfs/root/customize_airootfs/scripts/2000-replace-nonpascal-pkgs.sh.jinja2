@@ -1,28 +1,13 @@
 #!/bin/sh
 set -eu
-
-{% if platform == "cuda" %}
-# Use repo with patched packages
+{% if platform == "cuda" and ("comfyui" in packs or "automatic" in packs or "vllm" in packs or "invokeai" in packs) %}
 export PIP_EXTRA_INDEX_URL="https://sasha0552.github.io/pascal-pkgs-ci/"
-
-# Function to replace packages
 replace_package() {
-  # Package name
   package=$1
-
-  # Iterate over all virtual environments with $package
   for dir in $(find /home/tori -type d -wholename "*/site-packages/$package-*.dist-info"); do
-    # Get path to python interpreter
     interpreter=$(realpath -s "$dir/../../../../bin/python")
-
-    # Replace $package
-    transient-package install      \
-      --interpreter "$interpreter" \
-      --source "$package"          \
-      --target "$package-pascal"
+    transient-package install --interpreter "$interpreter" --source "$package" --target "$package-pascal"
   done
 }
-
-# Replace packages
 replace_package triton
 {% endif %}

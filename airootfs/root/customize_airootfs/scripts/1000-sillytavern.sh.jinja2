@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
-
-# install sillytavern
+{% if "sillytavern" in packs %}
+# EXPERIMENTAL pack: global npm install of the published package
 npm install --global sillytavern
+{% endif %}

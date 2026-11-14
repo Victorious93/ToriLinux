@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Run REAL capability tests against the running local server and record the result.
+
+Streaming and tool-calling are advertised to remote clients only if they pass here
+for the exact model file currently loaded.
+"""
+import http.client, json, os, sys, time
+import os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "tori"))
+import toricommon as tc  # noqa: E402
+
+port = int(os.environ.get("TORI_UPSTREAM_PORT", "18081"))
+key = tc.load_secrets().get("upstream_key", "")
+s = tc.load_settings()
+model = s.get("model")
+if not model:
+    sys.exit("No model selected.")
+
+
+def post(body, stream=False):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=300)
+    c.request("POST", "/v1/chat/completions", json.dumps(body), {"Content-Type": "application/json", "Authorization": "Bearer " + key})
+    r = c.getresponse()
+    return r, c
+
+
+res = {"model_path": model, "tested_at": tc.now(), "streaming": False, "tool_calling": False, "details": {}}
+st = os.stat(model)
+res["model_size"], res["model_mtime"] = st.st_size, int(st.st_mtime)
+try:
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", "/props", headers={"Authorization": "Bearer " + key})
+    pr = json.loads(c.getresponse().read() or b"{}")
+    res["server_version"] = pr.get("build_info")
+    res["details"]["chat_template_present"] = bool(pr.get("chat_template"))
+except (OSError, ValueError) as e:
+    sys.exit(f"Server not reachable on 127.0.0.1:{port}: {e}. Start the model in the Control Center first.")
+
+# 1) streaming: must yield >=2 SSE data events and terminate with [DONE]
+r, c = post({"model": "tori-local", "stream": True, "max_tokens": 16, "messages": [{"role": "user", "content": "Say hi."}]})
+raw = r.read().decode("utf-8", "replace")
+events = [l for l in raw.splitlines() if l.startswith("data:")]
+res["streaming"] = r.status == 200 and len(events) >= 2 and events[-1].strip() == "data: [DONE]"
+res["details"]["stream_events"] = len(events)
+
+# 2) tool calling: model must emit a well-formed tool call with valid JSON arguments
+tools = [{"type": "function", "function": {"name": "get_weather", "description": "Get the weather for a city",
+          "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]
+ok = False
+try:
+    r, c = post({"model": "tori-local", "max_tokens": 128, "temperature": 0, "tools": tools, "tool_choice": "auto",
+                 "messages": [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]})
+    d = json.loads(r.read())
+    ch = d["choices"][0]
+    tcs = ch["message"].get("tool_calls") or []
+    if tcs and ch.get("finish_reason") == "tool_calls":
+        a = json.loads(tcs[0]["function"]["arguments"])
+        ok = tcs[0]["function"]["name"] == "get_weather" and isinstance(a.get("city"), str)
+    res["details"]["tool_finish_reason"] = ch.get("finish_reason")
+except (OSError, ValueError, KeyError) as e:
+    res["details"]["tool_error"] = str(e)
+res["tool_calling"] = ok
+
+p = tc.data_path("server", "capabilities.json")
+tc.atomic_write(p, json.dumps(res, indent=2), 0o644)
+print(json.dumps(res, indent=2))
+print("\nstreaming:", "PASS" if res["streaming"] else "FAIL", "| tool calling:", "PASS" if res["tool_calling"] else "FAIL/unsupported")
+sys.exit(0 if res["streaming"] else 1)
