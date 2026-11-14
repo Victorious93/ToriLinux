@@ -5,11 +5,11 @@ UEFI (see [test-report.md](test-report.md)):
 
 ```
 raw (default)   1  hybrid ISO + EFI partition (the ISO itself, ~1.8 GiB)
-                3  ext4 "TORIDATA"  everything else except ~1 GiB left unallocated
+                3  ext4 "VICTORDATA"  everything else except ~1 GiB left unallocated
 ```
 
 The ISO is written to the drive and an ext4 partition is added in the free space. One OS per stick, UEFI and BIOS. Updating the
-OS means re-running `write` (it re-creates the stick; copy your data off `TORIDATA` first, or re-import models).
+OS means re-running `write` (it re-creates the stick; copy your data off `VICTORDATA` first, or re-import models).
 
 `--layout ventoy` gives a multi-ISO stick but, in testing, Ventoy booted this ISO in **legacy BIOS mode only**; UEFI mode did
 not boot it in the emulator. Layout:
@@ -17,7 +17,7 @@ not boot it in the emulator. Layout:
 ```
 1  exFAT  "Ventoy"    ISO storage (>= 8 GiB or ~2x the ISO). Put extra ISOs here too.
 2  FAT    "VTOYEFI"   32 MiB, Ventoy
-3  ext4   "TORIDATA"  everything else except ~1 GiB left unallocated  -> models, chats, settings, outputs ...
+3  ext4   "VICTORDATA"  everything else except ~1 GiB left unallocated  -> models, chats, settings, outputs ...
 ```
 
 Sizing is computed from the drive's **measured byte size** (a "64 GB" stick is ~59 GiB; "128 GB" ~119 GiB) and the
@@ -29,19 +29,19 @@ measured ISO size - not from the label. Drives that would leave < 8 GiB for data
   the repo/workspace are excluded or flagged.
 * `write` needs the **exact device path and its serial** (`--confirm-serial`). It rechecks identity right before
   writing, requires the ISO's `.sha256` to match, refuses mounted devices and non-USB transports, installs a
-  checksum-verified Ventoy release, creates `TORIDATA`, copies the ISO, **re-verifies the copied ISO's SHA-256**,
+  checksum-verified Ventoy release, creates `VICTORDATA`, copies the ISO, **re-verifies the copied ISO's SHA-256**,
   flushes and unmounts.
 * It erases the entire target device.
 
 ## What persists across reboots
 
-| Persists (on `TORIDATA`) | Does **not** persist |
+| Persists (on `VICTORDATA`) | Does **not** persist |
 |---|---|
 | Models (`models/`), chat history & app settings (`config/`, `chats/`) | The operating system, installed packages, `/etc` changes |
-| Image-workflow outputs (`images/`, `outputs/`), documents, server config, TLS cert, API-key hash, logs | Anything outside the Tori data tree (home dir, `/tmp`, shell history) |
+| Image-workflow outputs (`images/`, `outputs/`), documents, server config, TLS cert, API-key hash, logs | Anything outside the VictorLinux data tree (home dir, `/tmp`, shell history) |
 
-The partition is found by **label `TORIDATA`** at boot (`tori-boot-setup.service`), mounted by UUID, and exposed at
-`/mnt/toridata/tori` (symlink `~/tori-data`). If it is missing, read-only, or ambiguous the Control Center says so and
+The partition is found by **label `VICTORDATA`** at boot (`victor-boot-setup.service`), mounted by UUID, and exposed at
+`/mnt/victordata/victorlinux` (symlink `~/victor-data`). If it is missing, read-only, or ambiguous the Control Center says so and
 offers an explicit **temporary session** (RAM only; data lost on reboot). Ventoy's generic persistence plugin is **not**
 used: it has not been verified with this ISO, and application-level persistence is simpler and safer.
 

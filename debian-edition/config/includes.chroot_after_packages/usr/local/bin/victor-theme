@@ -1,27 +1,44 @@
 #!/bin/bash
-# victor-theme dark|light|toggle|status : switches the desktop (Xfce/GTK), terminal, chat browser and Control Center together.
+# VictorLinux has one appearance: dark. Old per-drive light preferences are ignored.
 set -Eeuo pipefail
-f="$HOME/.config/victorlinux/theme"; mkdir -p "$(dirname "$f")"
-cur=$(cat "$f" 2>/dev/null || echo dark)
 case "${1:-status}" in
-  status) echo "$cur"; exit 0;;
-  apply)  # at login: restore the per-drive choice from the data partition, else keep the default (dark)
-    saved=$(python3 -c "import json;print(json.load(open('/run/victor/root/settings/ui.json')).get('theme',''))" 2>/dev/null || true)
-    case "$saved" in dark|light) new="$saved";; *) new="$cur";; esac;;
-  toggle) new=$([ "$cur" = dark ] && echo light || echo dark);;
-  dark|light) new="$1";;
-  *) echo "usage: victor-theme dark|light|toggle|status|apply" >&2; exit 2;;
+  status) echo dark; exit 0;;
+  dark|apply) ;;
+  *) echo "VictorLinux always uses dark mode. Usage: victor-theme dark|apply|status" >&2; exit 2;;
 esac
-echo "$new" > "$f"
-gtk=$([ "$new" = dark ] && echo Adwaita-dark || echo Adwaita)
+cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
+mkdir -p "$cfg/victorlinux"
+printf 'dark\n' > "$cfg/victorlinux/theme"
+python3 - "$cfg" <<'PYTHEME'
+import configparser, json, os, sys
+from pathlib import Path
+cfg = Path(sys.argv[1])
+for version in ('gtk-3.0', 'gtk-4.0'):
+    p = cfg / version / 'settings.ini'
+    c = configparser.ConfigParser(); c.optionxform = str
+    c.read(p)
+    if not c.has_section('Settings'): c.add_section('Settings')
+    c['Settings'].update({'gtk-theme-name': 'Adwaita-dark', 'gtk-application-prefer-dark-theme': 'true'})
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open('w') as f: c.write(f, space_around_delimiters=False)
+p = cfg / 'xfce4/terminal/terminalrc'
+c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
+if not c.has_section('Configuration'): c.add_section('Configuration')
+c['Configuration'].update({'ColorForeground': '#d8dee9', 'ColorBackground': '#1b1e26'})
+p.parent.mkdir(parents=True, exist_ok=True)
+with p.open('w') as f: c.write(f, space_around_delimiters=False)
+# Best effort: persistence may be missing or read-only. Preserve unrelated settings.
+p = Path(os.environ.get('VICTOR_RUN', '/run/victor')) / 'root/settings/ui.json'
+try:
+    data = json.loads(p.read_text()) if p.exists() else {}
+    if not isinstance(data, dict): data = {}
+    data['theme'] = 'dark'
+    tmp = p.with_suffix('.tmp')
+    tmp.write_text(json.dumps(data) + '\n'); tmp.replace(p)
+except (OSError, ValueError): pass
+PYTHEME
 if command -v xfconf-query >/dev/null && [ -n "${DISPLAY:-}" ]; then
-  xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s "$gtk" 2>/dev/null || xfconf-query -c xsettings -p /Net/ThemeName -s "$gtk" 2>/dev/null || true
+  xfconf-query -c xsettings -p /Net/ThemeName -s Adwaita-dark 2>/dev/null || \
+    xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s Adwaita-dark 2>/dev/null || true
 fi
-tr="$HOME/.config/xfce4/terminal/terminalrc"
-if [ -f "$tr" ]; then
-  if [ "$new" = dark ]; then sed -i 's/^ColorForeground=.*/ColorForeground=#d8dee9/;s/^ColorBackground=.*/ColorBackground=#1b1e26/' "$tr"
-  else sed -i 's/^ColorForeground=.*/ColorForeground=#2e3440/;s/^ColorBackground=.*/ColorBackground=#f5f6f8/' "$tr"; fi
-fi
-# persist the choice per drive (best effort; the data partition may be absent)
-[ -d /run/victor/root/settings ] && echo "{\"theme\": \"$new\"}" > /run/victor/root/settings/ui.json 2>/dev/null || true
-echo "$new"
+echo dark

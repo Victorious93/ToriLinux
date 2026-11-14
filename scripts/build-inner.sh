@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Runs INSIDE an Arch Linux environment (container, chroot or native) as root.
-# usage: build-inner.sh PLATFORM TYPE [--packs a,b] ; env: WORKDIR (default /var/tmp/tori-work), OUTDIR (default ./out)
+# usage: build-inner.sh PLATFORM TYPE [--packs a,b] ; env: WORKDIR (default /var/tmp/victor-work), OUTDIR (default ./out)
 # Requires network for pacman (build time only). Produces: ISO, .sha256, manifest.json, build.log, pkglist.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
-WORKDIR=${WORKDIR:-/var/tmp/tori-work}
+WORKDIR=${WORKDIR:-/var/tmp/victor-work}
 OUTDIR=${OUTDIR:-$root/out}
 MAX_TRIES=${MAX_TRIES:-3}
 

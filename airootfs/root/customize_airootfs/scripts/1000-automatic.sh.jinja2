@@ -5,7 +5,7 @@ set -eu
 git clone "{{ repositories.automatic }}.git"
 pushd "automatic"
   git checkout "{{ revisions.automatic }}"
-  git checkout -b tori
+  git checkout -b victor
   git submodule update --init --recursive
   python3 -m venv venv
   source venv/bin/activate

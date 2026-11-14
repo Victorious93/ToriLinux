@@ -19,14 +19,3 @@ airootfs/root/customize_airootfs/scripts/9999-cleanup.sh
 packages.x86_64
 pacman.conf
 profiledef.sh
-
-# python bytecode
-__pycache__/
-*.pyc
-
-# fleet coordinator installed into the Arch profile at build time (fleet/install.sh)
-airootfs/usr/local/lib/victorfleet/
-airootfs/usr/local/bin/victor-fleet
-airootfs/usr/local/lib/victor-build/
-airootfs/var/cache/victor-sccache/
-out/tools/

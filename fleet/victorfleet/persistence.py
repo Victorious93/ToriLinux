@@ -34,7 +34,7 @@ def resolve(env=None):
         why = ""
         base = None
         victor_root = os.path.join(env.get("VICTOR_RUN", "/run/victor"), "root")
-        tori_state = os.path.join(env.get("TORI_RUN_DIR", "/run/tori"), "persist.json")
+        tori_state = os.path.join(env.get("VICTOR_RUN_DIR") or env.get("TORI_RUN_DIR") or "/run/victor", "persist.json")   # Arch edition (TORI_* = pre-rename name)
         if os.path.islink(victor_root) or os.path.isdir(victor_root):
             target = os.path.realpath(victor_root)
             sess = os.path.realpath(os.path.join(env.get("VICTOR_RUN", "/run/victor"), "session"))

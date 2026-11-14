@@ -1,0 +1,15 @@
+[Unit]
+Description=VictorLinux: locate persistent storage (VICTORDATA; legacy TORIDATA accepted) and prepare runtime state
+After=local-fs.target systemd-udevd.service
+Wants=systemd-udevd.service
+Before=getty@tty1.service
+ConditionPathExists=/usr/local/lib/victorlinux/victor-priv
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/victorlinux/victor-boot-setup
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

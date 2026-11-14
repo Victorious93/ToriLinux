@@ -10,6 +10,12 @@ def status():
 if status() != "locked":
     sys.exit(0)
 root = tk.Tk(); root.title("VictorLinux first-run setup")
+root.configure(bg="#101724")
+root.option_add("*background", "#101724"); root.option_add("*foreground", "#edf2fa")
+root.option_add("*selectBackground", "#34445f"); root.option_add("*insertBackground", "#edf2fa")
+style = ttk.Style(root); style.theme_use("clam")
+style.configure(".", background="#101724", foreground="#edf2fa", fieldbackground="#0c1420")
+style.configure("TButton", padding=(14, 8)); style.map("TButton", background=[("active", "#34445f")])
 ttk.Label(root, wraplength=420, padding=8, text="Welcome to VictorLinux. No shared default password exists. Choose your own owner password "
           "(min 8 chars). It is stored as a hash on your data partition (if one is selected) so it survives reboot; without a data "
           "partition you will be asked again each boot.").pack()

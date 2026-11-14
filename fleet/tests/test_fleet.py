@@ -434,7 +434,7 @@ class TestAdminSocket(Base):
 class TestPersistence(unittest.TestCase):
     def test_volatile_when_no_data_partition(self):
         d = tempfile.mkdtemp()
-        r = persistence.resolve({"VICTOR_RUN": d + "/none", "TORI_RUN_DIR": d + "/none", "XDG_RUNTIME_DIR": d})
+        r = persistence.resolve({"VICTOR_RUN": d + "/none", "VICTOR_RUN_DIR": d + "/none", "XDG_RUNTIME_DIR": d})
         self.assertFalse(r["durable"]); self.assertIn("no persistent", r["reason"])
 
     def test_session_mode_is_not_durable_and_readonly_reported(self):
@@ -452,13 +452,13 @@ class TestArchStateFile(unittest.TestCase):
         for mode in ("temporary", "missing", "readonly", "ambiguous"):
             d = tempfile.mkdtemp()
             json.dump({"mode": mode, "data_root": d, "message": "m"}, open(d + "/persist.json", "w"))
-            r = persistence.resolve({"VICTOR_RUN": d + "/none", "TORI_RUN_DIR": d, "XDG_RUNTIME_DIR": d})
+            r = persistence.resolve({"VICTOR_RUN": d + "/none", "VICTOR_RUN_DIR": d, "XDG_RUNTIME_DIR": d})
             self.assertFalse(r["durable"], mode)
 
     def test_arch_persistent_on_real_disk_is_durable_when_writable(self):
         d = tempfile.mkdtemp(dir="/var/tmp"); st = persistence._fstype_of(d)
         json.dump({"mode": "persistent", "data_root": d}, open(d + "/persist.json", "w"))
-        r = persistence.resolve({"VICTOR_RUN": d + "/none", "TORI_RUN_DIR": d})
+        r = persistence.resolve({"VICTOR_RUN": d + "/none", "VICTOR_RUN_DIR": d})
         self.assertEqual(r["durable"], st not in ("tmpfs", "overlay", "ramfs", "squashfs", "unknown"))
         self.assertTrue(r["writable"]); self.assertTrue(r["path"].endswith("/fleet"))
 

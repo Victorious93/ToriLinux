@@ -6,7 +6,7 @@ usage: .ci/configure.py PLATFORM TYPE [--packs a,b,c]
   PLATFORM  amd    AMD GPUs: llama.cpp Vulkan (default path) + CPU fallback
             cuda   NVIDIA GPUs: llama.cpp CUDA + Vulkan + CPU
             rocm   alias for `amd` with the experimental `hip` pack
-  TYPE      headless (alias: normal)  no desktop; control center reachable via browser/tori-open
+  TYPE      headless (alias: normal)  no desktop; control center reachable via browser/victor-open
             gui                       Openbox desktop that autostarts the control center
             empty                     drivers/OS only: no llama.cpp, no packs (as upstream "empty")
   PACKS     optional extras, all off by default (lean image):
@@ -22,7 +22,7 @@ import sys
 
 import jinja2
 
-PLATFORMS = ("amd", "cuda", "rocm")
+PLATFORMS = ("amd", "cuda", "universal", "rocm")
 TYPES = ("headless", "normal", "gui", "empty")
 PACKS = ("hip", "comfyui", "automatic", "invokeai", "sillytavern", "vllm")
 
@@ -57,6 +57,8 @@ def parse(argv):
   for p in packs:
     if p not in PACKS:
       sys.exit(f"unknown pack '{p}' (use: {', '.join(PACKS)})")
+  if platform == "universal":
+    platform = "cuda"  # same portable Vulkan/CPU builds plus the NVIDIA driver/CUDA stack
   if platform == "rocm":
     platform = "amd"
     packs = sorted(set(packs) | {"hip"})

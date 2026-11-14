@@ -1,0 +1,24 @@
+#!/bin/bash
+# Open the Control Center in a browser, starting it first if needed.
+set -u
+port="${VICTOR_CC_PORT:-8787}"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/victorlinux"
+token_file="$cache_dir/cc.token"
+if ! curl -fsS -m 2 "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+  mkdir -p "$cache_dir"
+  nohup victor-control-center >"$cache_dir/cc.log" 2>&1 &
+  for _ in $(seq 1 40); do
+    curl -fsS -m 1 "http://127.0.0.1:$port/" >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+fi
+if [ ! -r "$token_file" ]; then
+  echo "Control Center did not start; see $cache_dir/cc.log" >&2
+  exit 1
+fi
+url="http://127.0.0.1:$port/#t=$(cat "$token_file")"
+if [ -n "${DISPLAY:-}" ] && command -v firefox >/dev/null 2>&1; then
+  exec firefox --new-window "$url"
+fi
+echo "Open this URL in a browser on this machine (token is local to this session):"
+echo "$url"

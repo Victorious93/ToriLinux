@@ -1,3 +1,0 @@
-#!/bin/sh
-# Start the Tori Control Center (local-only web UI) as the current, unprivileged user.
-exec python3 -I /usr/local/lib/tori/control_center.py "$@"

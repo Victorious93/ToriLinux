@@ -1,5 +1,5 @@
 import os, struct, json, hashlib, pytest
-import toricommon as tc
+import victorcommon as tc
 
 
 def make_gguf(path, arch="llama", layers=4, heads=4, kv=2, emb=64, pad=0):
@@ -58,6 +58,51 @@ def test_split_detection(tmp_path):
     assert not ok and "missing" in why
 
 
+def test_split_estimate_counts_all_shards_and_lists_first_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("VICTOR_DATA", str(tmp_path))
+    models = tmp_path / "models"; models.mkdir()
+    a, b = models / "m-00001-of-00002.gguf", models / "m-00002-of-00002.gguf"
+    make_gguf(a, pad=1000); make_gguf(b, pad=2000)
+    assert tc.estimate_memory(str(a), 1024)["weights"] == a.stat().st_size + b.stat().st_size
+    assert [m["path"] for m in tc.list_models()] == [str(a)]
+
+
+def test_split_import_copies_whole_set_atomically(tmp_path):
+    a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
+    make_gguf(a, pad=10); make_gguf(b, pad=20)
+    seen = []
+    first, digests = tc.import_model(str(a), str(tmp_path / "dest"), progress=lambda d, t: seen.append((d, t)))
+    assert first == str(tmp_path / "dest" / a.name)
+    assert (tmp_path / "dest" / b.name).read_bytes() == b.read_bytes()
+    assert seen[-1][0] == seen[-1][1] == a.stat().st_size + b.stat().st_size
+    assert digests.count("=") == 2 and not list((tmp_path / "dest").glob("*.part"))
+
+
+def test_split_import_rejects_incomplete_set_and_cleans_up(tmp_path):
+    a = tmp_path / "m-00001-of-00003.gguf"; make_gguf(a)
+    with pytest.raises(ValueError, match="missing"):
+        tc.import_model(str(a), str(tmp_path / "dest"))
+    assert not (tmp_path / "dest").exists() or not list((tmp_path / "dest").iterdir())
+
+
+def test_split_import_failure_leaves_nothing_behind(tmp_path):
+    a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
+    make_gguf(a); b.write_bytes(b"corrupt shard, not GGUF")
+    with pytest.raises(tc.GGUFError):
+        tc.import_model(str(a), str(tmp_path / "dest"))
+    assert not list((tmp_path / "dest").glob("*")) if (tmp_path / "dest").exists() else True
+
+
+def test_split_import_refuses_overwrite_and_single_checksum(tmp_path):
+    a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
+    make_gguf(a); make_gguf(b)
+    with pytest.raises(ValueError, match="single checksum"):
+        tc.import_model(str(a), str(tmp_path / "dest"), "0" * 64)
+    tc.import_model(str(a), str(tmp_path / "dest"))
+    with pytest.raises(ValueError, match="already has"):
+        tc.import_model(str(a), str(tmp_path / "dest"))
+
+
 def test_fit_report():
     est = {"weights": 20 << 30, "total": 22 << 30, "kv_known": True}
     r = tc.fit_report(est, {"available": 8 << 30}, 16 << 30)
@@ -73,7 +118,19 @@ def test_backend_choice_never_claims_missing(monkeypatch):
 
 
 def test_settings_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("TORI_DATA", str(tmp_path))
+    monkeypatch.setenv("VICTOR_DATA", str(tmp_path))
     s = tc.load_settings(); s["ctx"] = 8192; tc.save_settings(s)
     assert tc.load_settings()["ctx"] == 8192
     assert oct(os.stat(tmp_path / "config" / "settings.json").st_mode)[-3:] == "600"
+
+
+def test_legacy_saved_model_paths_follow_selected_storage(tmp_path, monkeypatch):
+    monkeypatch.setenv("VICTOR_DATA", str(tmp_path))
+    cfg = tmp_path / "config"; cfg.mkdir()
+    (cfg / "settings.json").write_text(json.dumps({
+        "model": "/mnt/toridata/tori/models/model.gguf",
+        "extra_model_dirs": ["/mnt/toridata/tori/models/extra", "/media/other"],
+    }))
+    settings = tc.load_settings()
+    assert settings["model"] == str(tmp_path / "models/model.gguf")
+    assert settings["extra_model_dirs"] == [str(tmp_path / "models/extra"), "/media/other"]

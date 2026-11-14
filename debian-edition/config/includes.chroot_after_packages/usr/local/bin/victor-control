@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """VictorLinux Control Center (Tk). Thin GUI: every action is a `victor-ctl` call, so everything is scriptable."""
-import json, os, subprocess, sys, threading, tkinter as tk
+import json, math, os, subprocess, sys, threading, tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 CTL = "/usr/local/bin/victor-ctl"
@@ -17,30 +17,22 @@ def ctl(*args, timeout=600):
 
 
 PALETTES = {
-    "dark": {"bg": "#1b1e26", "panel": "#252a35", "fg": "#d8dee9", "accent": "#5e81ac", "entry": "#2e3440", "sel": "#434c5e"},
-    "light": {"bg": "#f5f6f8", "panel": "#e6e8ec", "fg": "#2e3440", "accent": "#5e81ac", "entry": "#ffffff", "sel": "#cfd6e4"},
+    "dark": {"bg": "#101724", "panel": "#1b273b", "fg": "#edf2fa", "accent": "#b7a0ff", "entry": "#0c1420", "sel": "#34445f"},
 }
-
-
-def current_theme():
-    try:
-        return subprocess.run(["/usr/local/bin/victor-theme", "status"], capture_output=True, text=True, timeout=5).stdout.strip() or "dark"
-    except Exception:
-        return "dark"
 
 
 class App(tk.Tk):
     def apply_theme(self, mode):
-        P = PALETTES[mode]; self.mode = mode
+        P = PALETTES["dark"]; self.mode = "dark"
         st = ttk.Style(self); st.theme_use("clam")
         st.configure(".", background=P["bg"], foreground=P["fg"], fieldbackground=P["entry"], bordercolor=P["panel"], lightcolor=P["panel"], darkcolor=P["panel"])
         st.configure("TFrame", background=P["bg"]); st.configure("TLabel", background=P["bg"], foreground=P["fg"])
         st.configure("TLabelframe", background=P["bg"], foreground=P["fg"]); st.configure("TLabelframe.Label", background=P["bg"], foreground=P["fg"])
-        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=5); st.map("TButton", background=[("active", P["sel"])])
+        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=(14, 9)); st.map("TButton", background=[("active", P["sel"])])
         st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"]); st.map("TCheckbutton", background=[("active", P["bg"])])
         st.configure("TEntry", fieldbackground=P["entry"], foreground=P["fg"], insertcolor=P["fg"])
         st.configure("TNotebook", background=P["bg"]); st.configure("TNotebook.Tab", background=P["panel"], foreground=P["fg"], padding=(10, 4))
-        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", "#ffffff")])
+        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", "#18102e")])
         self.configure(bg=P["bg"])
         self.option_add("*Listbox.background", P["entry"]); self.option_add("*Listbox.foreground", P["fg"])
         self.option_add("*Listbox.selectBackground", P["accent"]); self.option_add("*Text.background", P["entry"]); self.option_add("*Text.foreground", P["fg"])
@@ -51,17 +43,35 @@ class App(tk.Tk):
             except tk.TclError:
                 pass
 
-    def toggle_theme(self):
-        new = "light" if self.mode == "dark" else "dark"
-        self.bg(lambda: subprocess.run(["/usr/local/bin/victor-theme", new], capture_output=True, text=True).stdout, lambda r: self.apply_theme(new))
+    def rounded_tabs(self):
+        # Nine-slice tab backgrounds preserve round corners as labels grow.
+        def image(color):
+            img = tk.PhotoImage(master=self, width=40, height=36)
+            radius = 13
+            for y in range(36):
+                dy = max(radius - y, y - (35 - radius), 0)
+                inset = max(0, math.ceil(radius - math.sqrt(max(0, radius * radius - dy * dy))))
+                img.put(color, to=(inset, y, 40 - inset, y + 1))
+            return img
+        self._tab_images = [image(c) for c in ("#1b273b", "#b7a0ff", "#34445f")]
+        style = ttk.Style(self)
+        style.element_create("Victor.Tab", "image", self._tab_images[0],
+                             ("selected", self._tab_images[1]), ("active", self._tab_images[2]),
+                             border=(14, 13, 14, 13), sticky="nsew")
+        style.layout("TNotebook.Tab", [("Victor.Tab", {"sticky": "nsew", "children": [
+            ("Notebook.padding", {"side": "top", "sticky": "nsew", "children": [
+                ("Notebook.label", {"side": "top", "sticky": ""})]})]})])
 
     def __init__(self):
         super().__init__()
         self._themed = []
-        self.apply_theme(current_theme() if current_theme() in PALETTES else "dark")
+        self.apply_theme("dark"); self.rounded_tabs()
         self.title("VictorLinux Control Center")
-        self.geometry("860x600")
-        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=6, pady=6)
+        self.geometry("1040x760"); self.minsize(900, 640)
+        header = ttk.Frame(self, padding=(22, 18)); header.pack(fill="x")
+        ttk.Label(header, text="VictorLinux", font=("Sans", 22, "bold")).pack(anchor="w")
+        ttk.Label(header, text="VICTORIOUS FRAMEWORK   •   LOCAL AI WORKSPACE   •   ALWAYS DARK").pack(anchor="w", pady=(5, 0))
+        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
         self.status_var = tk.StringVar(value="starting...")
         ttk.Label(self, textvariable=self.status_var, anchor="w", relief="sunken").pack(fill="x", side="bottom")
         self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_diag()
@@ -95,6 +105,12 @@ class App(tk.Tk):
         return t
 
     # ---- Status
+    def recommend(self):
+        self.bg(lambda: ctl("hw", "recommend", timeout=90),
+                lambda result: messagebox.showinfo("Model recommendations (estimates)",
+                    result["note"] + "\n\n" + "\n".join(
+                        f"{m['name']}: {m['fit']} (~{m['estimated_total']/2**30:.1f} GiB)" for m in result["models"])))
+
     def tab_status(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Status")
         self.st_text = self.mkout(f)
@@ -372,7 +388,7 @@ class App(tk.Tk):
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")
-        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Dark / light theme", self.toggle_theme), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
         self.diag_out = self.mkout(f)
 

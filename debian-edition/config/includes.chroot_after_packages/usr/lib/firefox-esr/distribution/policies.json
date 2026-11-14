@@ -1,0 +1,12 @@
+{
+  "policies": {
+    "DontCheckDefaultBrowser": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "Preferences": {
+      "browser.theme.toolbar-theme": {"Value": 0, "Status": "locked"},
+      "browser.theme.content-theme": {"Value": 0, "Status": "locked"},
+      "layout.css.prefers-color-scheme.content-override": {"Value": 0, "Status": "locked"}
+    }
+  }
+}
