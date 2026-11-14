@@ -438,6 +438,8 @@ def write_raw(a, d, ident, l, want):
         if cur != sector0 or cur[off:off + 16] != bytes(16):
             raise SystemExit("MBR on the device is not what was just written; stopping before partitioning")
         f.seek(off); f.write(entry); f.flush(); os.fsync(f.fileno())
+    # ask the kernel itself to re-read the table (libparted's partprobe can fail on the ISO's leftover Apple driver descriptor)
+    sh(["blockdev", "--rereadpt", dev], check=False)
     sh(["partprobe", dev], check=False); sh(["udevadm", "settle"], check=False); time.sleep(2)
     same_disk()
     dpart = part_path(dev, slot + 1)

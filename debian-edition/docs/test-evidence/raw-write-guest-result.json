@@ -1,0 +1,46 @@
+{
+ "lsblk-before": [
+  0,
+  "NAME    SIZE TYPE SERIAL      TRAN   RM FSTYPE   LABEL\r\nloop0 909.2M loop                     0 squashfs \r\nsr0     991M rom  QM00001     sata    1 iso9660  VICTORLINUX\r\nsr1    1024M rom  QM00005     sata    1          \r\nvda      12G disk VICTORTEST0 virtio  0          \r\nvdb     1.8G disk VICTORTEST1 virtio  0 ext4     TOOLS"
+ ],
+ "mount-tools": [
+  0,
+  "lost+found  provision-usb.py  v.iso  v.iso.sha256"
+ ],
+ "list": [
+  0,
+  "EXCLUDED /dev/vda        12.00 GiB  tran=virtio rm=False model='' serial='VICTORTEST0' mounts=[]  <- not a USB/removable device (transport=virtio); use --allow-non-usb only if you are sure\r\nEXCLUDED /dev/vdb         1.76 GiB  tran=virtio rm=False model='' serial='VICTORTEST1' mounts=['/t']  <- backs required path /t, not a USB/removable device (transport=virtio); use --allow-non-usb only if you are sure\r\nEligibility is NOT a selection: you must name the exact device and confirm the erase token."
+ ],
+ "plan": [
+  0,
+  "Target identity: unknown-model:VICTORTEST0:12884901888\r\nProposed layout (raw):\r\n  device capacity (real)    :   12,884,901,888 B  (12.00 GiB)\r\n  ISO written raw (measured):    1,039,138,816 B  (hybrid: BIOS+UEFI boot records come from the ISO itself)\r\n  VICTORDATA (ext4, persist):    10.78 GiB  starting at sector 2029568\r\n  unallocated spare         :     0.25 GiB\r\n  NOTE: the ISO's own partitions are read-only media; updating the OS means re-running write (VICTORDATA is lost\r\n        unless you back it up first: raw mode rewrites the whole drive).\r\n\r\nTo write, pass exactly:  --confirm 'ERASE unknown-model:VICTORTEST0:12884901888'"
+ ],
+ "write": [
+  0,
+  "Target identity: unknown-model:VICTORTEST0:12884901888\r\nProposed layout (raw):\r\n  device capacity (real)    :   12,884,901,888 B  (12.00 GiB)\r\n  ISO written raw (measured):    1,039,138,816 B  (hybrid: BIOS+UEFI boot records come from the ISO itself)\r\n  VICTORDATA (ext4, persist):    10.78 GiB  starting at sector 2029568\r\n  unallocated spare         :     0.25 GiB\r\n  NOTE: the ISO's own partitions are read-only media; updating the OS means re-running write (VICTORDATA is lost\r\n        unless you back it up first: raw mode rewrites the whole drive).\r\n\r\nTo write, pass exactly:  --confirm 'ERASE unknown-model:VICTORTEST0:12884901888'\r\n>> writing hybrid ISO raw to /dev/vda\r\n>> ISO read back from the device matches fa4c5e32216e3fb15128f740448ff1f65e0394fbbf532b36a426ee176c01b9f9\r\nNAME    SIZE FSTYPE  LABEL       UUID\r\nvda      12G iso9660 VICTORLINUX 2026-11-14-14-56-50-00\r\n\u251c\ufffd\ufffdvda1  991M iso9660 VICTORLINUX 2026-11-14-14-56-50-00\r\n\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdvda2  3.3M vfat                6AF8-76B2\r\n\ufffd\ufffd\ufffd\u2500vda3 10.8G ext4    VICTORDATA  1dd14fb6-e4e4-41a0-a87a-1157e09d2432\r\n\r\nDONE: hybrid ISO written raw and verified by read-back; VICTORDATA created. Safe to remove after the OS reports it unmounted."
+ ],
+ "lsblk-after": [
+  0,
+  "NAME    SIZE TYPE FSTYPE  LABEL       UUID\r\nvda      12G disk iso9660 VICTORLINUX 2026-11-14-14-56-50-00\r\n|-vda1  991M part iso9660 VICTORLINUX 2026-11-14-14-56-50-00\r\n|-vda2  3.3M part vfat                6AF8-76B2\r\n`-vda3 10.8G part ext4    VICTORDATA  1dd14fb6-e4e4-41a0-a87a-1157e09d2432"
+ ],
+ "fdisk": [
+  0,
+  "label: dos\r\nlabel-id: 0x5c984c46\r\ndevice: /dev/vda\r\nunit: sectors\r\nsector-size: 512\r\n\r\n/dev/vda1 : start=          64, size=     2029504, type=0, bootable\r\n/dev/vda2 : start=         540, size=        6656, type=ef\r\n/dev/vda3 : start=     2029568, size=    22611968, type=83"
+ ],
+ "fsck": [
+  0,
+  "Pass 4: Checking reference counts\r\nPass 5: Checking group summary information\r\nVICTORDATA: 12/707136 files (0.0% non-contiguous), 71542/2826496 blocks"
+ ],
+ "mount-data": [
+  0,
+  ".  ..  lost+found  ok"
+ ],
+ "iso-cmp": [
+  0,
+  "/dev/vda /t/v.iso differ: char 480, line 4\r\ncmp-done"
+ ],
+ "cand": [
+  0,
+  "> > > > [('vda1', 'VICTORLINUX', 'iso9660'), ('vda2', None, 'vfat'), ('vda3', 'VICTORDATA', 'ext4')]"
+ ]
+}

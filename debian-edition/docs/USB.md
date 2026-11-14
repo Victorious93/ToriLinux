@@ -36,3 +36,12 @@ host keys are generated per drive on first use. Writing multiple attached drives
 
 ## Hardware-dependent limits
 exFAT mounting needs a kernel `exfat` driver (Linux ≥ 5.7) or `exfat-fuse` on the preparing host. Some cheap sticks misreport capacity: the tool trusts the kernel number, run `f3` first if in doubt.
+
+## Raw layout (`--layout raw`): no Ventoy
+`provision-usb.py {plan,write} --layout raw` writes the hybrid ISO **byte-for-byte** to the start of the drive (BIOS and UEFI boot records come from the ISO itself; one OS per stick) and
+appends an ext4 `VICTORDATA` partition in a free MBR slot after it, using all remaining space minus a spare. It needs no Ventoy download, gives more data space than the Ventoy layout and has fewer moving parts.
+Safety is identical to the Ventoy path (exact `ERASE <identity>` token, identity re-checked before writing, system disks/mounts/non-USB refused) plus: the ISO must carry an MBR with a free
+primary slot and no GPT (otherwise the plan is rejected and you are pointed at Ventoy); after writing, the drive is read back with O_DIRECT and compared with the ISO's SHA-256; only one 16-byte MBR
+entry is added and the rest of sector 0 is verified unchanged. The data partition is capped at the MBR limit (2 TiB). Trade-offs: updating the OS means rewriting the whole drive (**back up VICTORDATA first**);
+no multi-ISO.
+Tested: pure-function unit tests, and the real script run inside a QEMU guest against a blank 12 GiB virtio disk (see TEST-REPORT.md). **Not tested on a physical USB stick.**

@@ -89,3 +89,17 @@ Headless-specific evidence: Xorg/Xfce/LightDM neither installed nor running, no 
 
 **Not verified for headless:** the interactive text first-run (`victor-firstrun --text`) was *not* exercised end to end (the suite sets the password through `victor-priv`, as for the GUI); owner SSH enablement
 on this image; a real console/keyboard; real hardware; GPU acceleration; the integration-chroot suite and the bootloader screenshots were run for the GUI ISO only.
+
+## Raw USB provisioning (`provision-usb.py --layout raw`)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Unit tests (MBR inspection incl. non-hybrid/GPT/full/truncated rejection, raw layout fit/alignment/2 TiB cap) | passed, suite total **42 / 42** | `unit` |
+| Real script in a QEMU guest (live ISO, kernel with partition scanning) against a blank 12 GiB virtio disk: `list`, `plan`, wrong-token refusal, `write` with the exact token | **passed**: ISO read back from the device matched its SHA-256; partitions `vda1` iso9660 (991M), `vda2` vfat, `vda3` ext4 `VICTORDATA` (10.8G) at sector 2,029,568; `e2fsck` clean; mount+write ok | `raw-write-guest-result.json` |
+| Byte comparison of the written image to the ISO | exactly 12 bytes differ in the first 991 MiB, all inside the new MBR slot-3 entry (bytes 479-494) | (cmp, this session) |
+| Guest test re-run after adding `blockdev --rereadpt` (final script) | passed with the same layout and results | `raw-write-guest-result.json` |
+| Boot the written image alone (USB mass storage, `-snapshot`) | **BIOS and UEFI (OVMF) both reach the VictorLinux boot menu** (screenshots inspected; taken from the first run's image, which has the identical layout) | `rawdisk-bios.png`, `rawdisk-uefi.png` |
+
+Notes: the first attempt on a host loop device wrote and verified the ISO but could not create the partition node because this sandbox kernel does not scan loop partitions (`loop.max_part=0`) and has no
+device-mapper; that was an environment limit, so the guest test was used instead. `partprobe` (libparted) emits a warning on this ISO because of a leftover Apple-partition-map driver descriptor in its first
+sector; the script uses the result only as a hint and checks that the partition node actually appeared. **Not run: a physical USB stick, Secure Boot, a drive over 2 TiB, a 4Kn-sector drive.**
