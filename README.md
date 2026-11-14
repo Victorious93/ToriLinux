@@ -53,22 +53,26 @@ sudo scripts/make-usb.sh write --iso out/EXACT-victorlinux-image.iso --device /d
 
 The standard raw layout appends persistent `VICTORDATA` storage and computes sizes for the actual drive, including 64 GB and 128 GB drives. Ventoy is optional; the earlier Ventoy/UEFI failure remains unresolved until retested. Boot from the PC firmware's boot menu, then open `victor-open`, select storage, import a GGUF and press **Start**.
 
-## Boot through Victorious Flash on a phone
+## Boot media: a USB stick **or** a phone (same ISO, same PC hardware)
 
-[Victorious Flash](https://github.com/Victorious93/victorious-flash) already contains two relevant Android paths:
+The PC always runs VictorLinux and supplies the CPU and GPU. The ISO can reach it two ways; verify the **same SHA-256** for both.
 
-1. **Phone as boot media:** verify the VictorLinux ISO, then expose it read-only as a USB disk or CD-ROM. Connect the phone to the PC with a data cable and boot that USB device from the PC's firmware. Root and kernel/USB-gadget support are required; root alone does not establish compatibility.
-2. **Write to a USB stick:** attach the stick to the phone through OTG, verify the ISO and use **Write to USB stick…**. Wait for read-back verification before booting the PC from the stick.
+1. **USB stick** written by [Victorious Flash](https://github.com/Victorious93/victorious-flash) (desktop, or Android over OTG): pick the ISO (a downloaded one, or **a local image** such as your own build with its published SHA-256), choose the stick, type its name to confirm, and wait for the read-back verification. Tick **Also add a persistent VICTORDATA partition** to add the data partition in the same run; the layout is computed from the stick's real size and the image's own partition table (about 1 GiB is left unallocated), for 64 GB and 128 GB media alike. Raw ISO writing and persistence are separate steps inside one run: the ISO read-back hash is verified first, then only the 16-byte slot-3 entry of the MBR is added and `VICTORDATA` is formatted ext4.
+2. **Phone as the boot medium** (rooted Android, kernel USB-gadget support): Flash re-hashes the ISO against the trusted SHA-256 at the moment you press *Expose*, exposes it read-only as a USB disk or CD-ROM, watches the file while it is exposed (if it changes, USB is restored), and restores the phone's USB configuration when you stop, when the app is closed, or if the expose fails. MTP, ADB and tethering stop while exposed. Keep the phone connected until the PC has shut down.
 
-A raw ISO write alone does **not** add VictorLinux's persistent data partition. Phone CD-ROM emulation is read-only. Use a separate writable data drive or an explicitly temporary session; same-phone writable data-image support is additional integration work. Do not disconnect the phone while the PC is using it as live boot media.
+Persistence with the phone as the boot medium is **not** available on that same medium (emulation is read-only). Use a separate writable data drive carrying the `VICTORDATA` label, or an explicitly temporary session. A second writable data LUN on the phone was deliberately **not** implemented.
 
-The app's experimental no-root HTTP/EFI boot path has Ubuntu/casper-specific logic. Do not assume it can boot the Arch image without further implementation and firmware testing. Boot support for this revised ISO has **not** been verified on a real phone or PC in this change.
+Phone gadget mode (the phone is a USB *device* to the PC) and OTG (the phone is a USB *host* to a stick) are different roles; one port cannot do both at once.
 
-## Victorious Browser
+The no-root HTTP/EFI path in Flash is Ubuntu/casper-only and is **not supported for VictorLinux**; Flash says so instead of trying. Flash does not install VictorLinux onto an internal disk. No VictorLinux download exists in Flash's catalog because no release has been published yet; use a local image.
 
-[Victorious Browser](https://github.com/Victorious93/victorious-browser) is an **Android WebView app**, not a native Linux desktop browser. It can be the phone-side companion for saved PC inference/chat panels, model-fit information and authenticated remote inference over the owner's configured LAN/VPN. On a phone, `127.0.0.1` refers to the phone, not the PC.
+Boot support for this revised ISO has **not** been verified on a real phone or PC; no ISO was built in the development environment (see the test report).
 
-Keep Firefox as the PC desktop browser until a separately built desktop browser exists. Keep local administration on `127.0.0.1:8787`; do not publish the session token or expose that administrative listener just to make a phone panel work. The separate `Victorious93/browser` repository is a headless Lightpanda fork, not the Android app or a graphical replacement.
+## Hardware adaptation, models and the phone companion
+
+At every model start the PC measures itself and plans accordingly: [hardware and model selection](docs/hardware-and-models.md) (device memory pools, automatic context, threads, GPU layers, ranked local models, estimates vs verified generation, atomic split-GGUF import). Check it with `victor-hardware` or *Check this PC & suggest models* in the Control Center.
+
+[Victorious Browser](https://github.com/Victorious93/victorious-browser) (Android) is the phone companion: **Tools → VictorLinux PC**. It reads a read-only, authenticated report from the inference gateway and chats with the PC's local model; see [the companion API](docs/companion-api.md). It is an Android app, not a Linux desktop browser; on a phone `127.0.0.1` is the phone. Keep Firefox as the PC browser. The Control Center stays on `127.0.0.1:8787` and is never published.
 
 ## Commands after the rename
 

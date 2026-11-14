@@ -10,8 +10,10 @@ import json
 import os
 import socket
 import ssl
+import time
 import uuid
 
+import hostplan
 import victorcommon as tc
 
 SCHEMA = 1
@@ -63,6 +65,23 @@ def tls_fingerprint(cert_path=None):
         return None
 
 
+_MODELS_CACHE = {"at": 0.0, "key": None, "rows": []}
+
+
+def model_fits(host, ram):
+    """Top local models ranked for THIS boot's hardware (names only, no paths). Cached 30 s: reading GGUF headers is not free."""
+    now = time.time()
+    s = tc.load_settings()
+    key = (host.get("backend"), (host.get("device") or {}).get("budget"), tuple(sorted(m["path"] for m in tc.list_models(s["extra_model_dirs"]))))
+    if _MODELS_CACHE["key"] == key and now - _MODELS_CACHE["at"] < 30:
+        return _MODELS_CACHE["rows"]
+    dev = host.get("device") or {"kind": "system", "budget": int(ram.get("available", 0) * hostplan.RAM_FRACTION), "free": ram.get("available", 0), "others": [], "device": None}
+    rows = hostplan.rank_local(tc.list_models(s["extra_model_dirs"]), ram, dev, host.get("backend"))[:8]
+    out = [{"name": r["name"], "fit": r["fit"], "ctx": r.get("ctx"), "verified": r["verified"], "size": r["size"]} for r in rows]
+    _MODELS_CACHE.update(at=now, key=key, rows=out)
+    return out
+
+
 def report(cfg=None):
     host = _read_json(os.path.join(tc.RUN_DIR, "host.json"))
     runtime = _read_json(os.path.join(tc.RUN_DIR, "runtime.json"))
@@ -85,6 +104,7 @@ def report(cfg=None):
             "backend": runtime.get("backend"), "context": runtime.get("ctx"), "gpu_layers": runtime.get("ngl"),
             "generation_check": runtime.get("verify"),
         },
+        "models": model_fits(host, ram) if host else [],
         "transport": {"tls": bool((cfg or {}).get("tls")), "tls_fingerprint_sha256": tls_fingerprint()},
         "privacy": "Inference stays on this PC. No telemetry, no cloud fallback. This report is read-only and contains no keys, paths or chats.",
     }
