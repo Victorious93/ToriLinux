@@ -57,6 +57,9 @@ lb config noauto \
 # static config tree
 cp -a "$HERE/config/package-lists/." config/package-lists/
 cp -a "$HERE/config/hooks/live/." config/hooks/live/
+mkdir -p config/hooks/normal config/bootloaders
+cp -a "$HERE/config/hooks/normal/." config/hooks/normal/
+cp -a "$HERE/config/bootloaders/." config/bootloaders/
 mkdir -p config/includes.chroot_after_packages
 cp -a "$HERE/config/includes.chroot_after_packages/." config/includes.chroot_after_packages/
 if [ "$PROFILE" = nvidia ]; then

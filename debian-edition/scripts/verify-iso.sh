@@ -9,6 +9,14 @@ rep="$(xorriso -indev "$iso" -report_el_torito plain 2>&1)"
 echo "$rep" | grep -q 'BIOS' && note PASS "El Torito BIOS boot image present" || note FAIL "no BIOS boot image"
 echo "$rep" | grep -q 'UEFI' && note PASS "El Torito UEFI boot image present" || note FAIL "no UEFI boot image"
 xorriso -indev "$iso" -ls /live 2>&1 | grep -q filesystem.squashfs && note PASS "live/filesystem.squashfs present" || note FAIL "squashfs missing"
+# boot-menu branding (isolinux + GRUB): VictorLinux labels present, no generic Debian/live-build text
+bt="$(mktemp -d)"
+for f in /isolinux/live.cfg /isolinux/menu.cfg /boot/grub/grub.cfg; do xorriso -osirrox on -indev "$iso" -extract "$f" "$bt/$(echo "$f" | tr / _)" >/dev/null 2>&1 || true; done
+if [ -s "$bt/_isolinux_live.cfg" ] && [ -s "$bt/_boot_grub_grub.cfg" ] && grep -q 'VictorLinux' "$bt/_isolinux_live.cfg" "$bt/_boot_grub_grub.cfg" "$bt/_isolinux_menu.cfg" \
+   && ! grep -qE 'Live system|Debian GNU/Linux|live-build' "$bt/_isolinux_live.cfg" "$bt/_isolinux_menu.cfg" "$bt/_boot_grub_grub.cfg"; then
+  note PASS "boot menus (isolinux + GRUB) say VictorLinux, no generic Debian/live-build labels"
+else note FAIL "boot-menu branding"; fi
+rm -rf "$bt"
 if [ "$(id -u)" -eq 0 ]; then
   t="$(mktemp -d)"; trap 'umount "$t/sq" 2>/dev/null; rm -rf "$t"' EXIT
   xorriso -osirrox on -indev "$iso" -extract /live/filesystem.squashfs "$t/fs.sq" >/dev/null 2>&1

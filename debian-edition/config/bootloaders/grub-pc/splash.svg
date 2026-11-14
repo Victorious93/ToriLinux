@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VictorLinux boot splash. Rendered to splash.png by live-build (640x480 for isolinux, scaled for GRUB).
+     Replaces live-build's default splash, which hard-codes "Debian GNU/Linux" and live-build's logo.
+     @...@ placeholders are filled in by live-build. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <rect width="640" height="480" fill="#0b0e14"/>
+  <rect x="48" y="52" width="6" height="86" fill="#5b8def"/>
+  <g font-family="DejaVu Sans, sans-serif" fill="#ffffff">
+    <text x="72" y="100" font-size="44" font-weight="bold">VictorLinux</text>
+    <text x="74" y="130" font-size="16" fill="#a8b3c7">Local AI workstation &#183; Debian @VERSION@ base (@DISTRIBUTION@) &#183; @ARCHITECTURE@</text>
+    <text x="74" y="190" font-size="13" fill="#a8b3c7">Built: @YEAR@-@MONTH@-@DAY@ @HOUR@:@MINUTE@:@SECOND@ @TIMEZONE@</text>
+    <text x="74" y="212" font-size="12" fill="#7d889b">linux: @LINUX_VERSIONS@</text>
+    <text x="74" y="230" font-size="12" fill="#7d889b">live-boot: @LIVE_BOOT_VERSION@</text>
+    <text x="74" y="270" font-size="12" fill="#7d889b">Runs from RAM; only the VICTORDATA partition persists. Offline by default.</text>
+  </g>
+</svg>

@@ -28,8 +28,8 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           cd debian-edition
           python3 -I -m compileall -q config scripts tests
-          for f in build.sh scripts/*.sh tests/*.sh config/hooks/live/*.chroot; do bash -n "$f"; done
-          shellcheck -S error build.sh scripts/*.sh config/hooks/live/*.chroot
+          for f in build.sh scripts/*.sh tests/*.sh config/hooks/live/*.chroot config/hooks/normal/*.binary; do bash -n "$f"; done
+          shellcheck -S error build.sh scripts/*.sh config/hooks/live/*.chroot config/hooks/normal/*.binary
           python3 -I -m unittest discover -s tests -p 'test_*.py' -v
 
   iso:
