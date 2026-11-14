@@ -74,7 +74,7 @@ class App(tk.Tk):
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
         self.status_var = tk.StringVar(value="starting...")
         ttk.Label(self, textvariable=self.status_var, anchor="w", relief="sunken").pack(fill="x", side="bottom")
-        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_storage(); self.tab_diag()
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_diag()
         self.after(500, self.refresh)
 
     # ---- helpers
@@ -280,6 +280,81 @@ class App(tk.Tk):
 
     def kali_term(self):
         subprocess.Popen(["xfce4-terminal", "-e", "podman exec -it victor-kali /bin/bash"])
+
+    # ---- Fleet (phones). Every action is `victor-ctl fleet ...` -> victor-fleet; the GUI holds no state or credentials.
+    def tab_fleet(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Fleet")
+        ttk.Label(f, wraplength=820, text="Coordinator for up to 4 DroidCommand phones. Off until you start it; local-only until you enable fleet networking "
+                  "(victor-ctl fleet config --enable-network ADDR). Phones keep their own policy and approvals; revoke removes a phone immediately.").pack(anchor="w")
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        for t, fn in (("Refresh", self.fleet_refresh), ("Start", lambda: self.fleet_do("start")), ("Stop", lambda: self.fleet_do("stop")),
+                      ("Pair phone...", self.fleet_pair), ("Pause", lambda: self.fleet_dev("pause")), ("Resume", lambda: self.fleet_dev("resume")),
+                      ("Disable", lambda: self.fleet_dev("disable")), ("Enable", lambda: self.fleet_dev("enable")), ("Revoke", self.fleet_revoke)):
+            ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        self.fl_devs = tk.Listbox(f, height=5, exportselection=False); self.fl_devs.pack(fill="x", pady=2); self._themed.append(self.fl_devs)
+        b2 = ttk.Frame(f); b2.pack(fill="x", pady=4)
+        for t, fn in (("Submit plan file...", self.fleet_submit), ("Batch-hash folder...", self.fleet_batch), ("Review", lambda: self.fleet_plan("review")),
+                      ("Approve", lambda: self.fleet_plan("approve")), ("Cancel", lambda: self.fleet_plan("cancel")), ("Report", lambda: self.fleet_plan("report"))):
+            ttk.Button(b2, text=t, command=fn).pack(side="left", padx=2)
+        self.fl_plans = tk.Listbox(f, height=4, exportselection=False); self.fl_plans.pack(fill="x", pady=2); self._themed.append(self.fl_plans)
+        self.fl_out = self.mkout(f); self._fl_dev_ids = []; self._fl_plan_ids = []
+
+    def fleet_refresh(self):
+        def get():
+            st = ctl("fleet", "status")
+            plans = ctl("fleet", "plans") if st.get("running") else []
+            return st, plans
+        def done(r):
+            st, plans = r
+            self.fl_devs.delete(0, "end"); self._fl_dev_ids = []
+            for d in st.get("devices", []):
+                ds = d.get("device_state", {})
+                line = (f"{d['name']}  [{d['state']}{' paused' if d['paused'] else ''}{'' if d['enabled'] else ' disabled'}]  "
+                        f"{'connected' if d['connected'] else 'offline'}  bat={ds.get('battery_percent','?')}% thermal={ds.get('thermal','?')}  "
+                        f"root={'yes' if d.get('capabilities', {}).get('root', {}).get('granted') else 'no'}  jobs={len(d['active_jobs'])}")
+                self.fl_devs.insert("end", line); self._fl_dev_ids.append(d["id"])
+            self.fl_plans.delete(0, "end"); self._fl_plan_ids = []
+            for p_ in plans:
+                self.fl_plans.insert("end", f"{p_['id']}  {p_['state']}  {p_['title']}"); self._fl_plan_ids.append(p_["id"])
+            note = st.get("durability_warning") or ("persistent: " + st["persistence"]["reason"] if st.get("running") else "")
+            self.out(self.fl_out, json.dumps({k: st.get(k) for k in ("running", "bind", "network_enabled", "fingerprint_sha256", "job_counts")}, indent=2) +
+                     ("\n" + note if note else "") + ("" if st.get("running") else "\nCoordinator is stopped (press Start)."))
+        self.bg(get, done)
+
+    def fleet_do(self, cmd):
+        self.bg(lambda: ctl("fleet", cmd), lambda r: (self.out(self.fl_out, r if isinstance(r, str) else json.dumps(r, indent=2)), self.after(600, self.fleet_refresh)))
+
+    def _fl_sel(self, lb, ids):
+        i = lb.curselection()
+        if not i: messagebox.showinfo("Fleet", "Select an item first."); return None
+        return ids[i[0]]
+
+    def fleet_dev(self, cmd):
+        d = self._fl_sel(self.fl_devs, self._fl_dev_ids)
+        if d: self.bg(lambda: ctl("fleet", cmd, d), lambda r: self.fleet_refresh())
+
+    def fleet_revoke(self):
+        d = self._fl_sel(self.fl_devs, self._fl_dev_ids)
+        if d and messagebox.askyesno("Revoke", "Revoke this phone? Its credential stops working immediately and its running jobs are parked for review."):
+            self.bg(lambda: ctl("fleet", "revoke", d), lambda r: self.fleet_refresh())
+
+    def fleet_pair(self):
+        def done(r):
+            self.out(self.fl_out, "PAIRING (single use, expires in %ss)\nCoordinator: %s\nVerify this fingerprint matches what the phone shows BEFORE approving:\n  %s\n\nPairing secret (enter on the phone):\n  %s\n" %
+                     (r["expires_in_s"], r["coordinator_url"], r["coordinator_fingerprint_sha256"], r["pairing_secret"]))
+        self.bg(lambda: ctl("fleet", "pair"), done)
+
+    def fleet_submit(self):
+        p = filedialog.askopenfilename(title="Fleet plan (JSON)", filetypes=[("JSON", "*.json")])
+        if p: self.bg(lambda: ctl("fleet", "submit", p), lambda r: (self.out(self.fl_out, json.dumps(r, indent=2)), self.fleet_refresh()))
+
+    def fleet_batch(self):
+        d = filedialog.askdirectory(title="Folder of files to hash across phones")
+        if d: self.bg(lambda: ctl("fleet", "workflow", "batch-hash", "--root", d), lambda r: (self.out(self.fl_out, json.dumps(r, indent=2)), self.fleet_refresh()))
+
+    def fleet_plan(self, cmd):
+        p = self._fl_sel(self.fl_plans, self._fl_plan_ids)
+        if p: self.bg(lambda: ctl("fleet", cmd, p), lambda r: (self.out(self.fl_out, r if isinstance(r, str) else json.dumps(r, indent=2)), self.fleet_refresh() if cmd != "report" and cmd != "review" else None))
 
     # ---- Storage
     def tab_storage(self):

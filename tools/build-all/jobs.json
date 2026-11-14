@@ -1,0 +1,27 @@
+{
+  "_comment": "Commands are the ones the repositories document/CI use. `needs` are host tools probed BEFORE running; a missing tool makes the job BLOCKED (never silently skipped, never faked). `required` jobs that are not PASSED make the whole run fail. `weight` is a rough count of CPU cores the job wants (the runner never exceeds --cpus).",
+  "repos": {
+    "VictorLinux": "VictorLinux", "victorious-flash": "victorious-flash", "droidcommand-AI": "droidcommand-AI", "rustdeskV": "rustdeskV",
+    "VictorSuite": "VictorSuite", "File-Manager": "File-Manager", "victorious-mesh": "victorious-mesh", "fleet-manifest": "victorious93/fleet-manifest"
+  },
+  "jobs": [
+    {"id": "vl-fleet-tests", "repo": "VictorLinux", "cwd": "fleet", "cmd": "PYTHONPATH=tests:. python3 -m unittest discover -s tests", "needs": ["python3", "openssl"], "weight": 2, "required": true},
+    {"id": "vl-debian-logic-tests", "repo": "VictorLinux", "cwd": "debian-edition", "cmd": "python3 -m unittest tests.test_logic", "needs": ["python3"], "weight": 1, "required": true},
+    {"id": "vl-arch-render-and-ui", "repo": "VictorLinux", "cwd": ".", "cmd": "bash tools/build-all/arch-render-check.sh", "needs": ["python3", "node"], "weight": 1, "required": true},
+    {"id": "vl-native-cache-off", "repo": "VictorLinux", "cwd": ".", "cmd": "bash tools/build-all/native-cache-check.sh off", "needs": ["cmake", "ninja", "g++", "env:LLAMA_SRC"], "weight": 4, "required": false, "note": "ordinary uncached llama.cpp CPU build; needs LLAMA_SRC"},
+    {"id": "vl-native-cache-on", "repo": "VictorLinux", "cwd": ".", "cmd": "bash tools/build-all/native-cache-check.sh on", "needs": ["cmake", "ninja", "g++", "env:LLAMA_SRC"], "deps": ["vl-native-cache-off"], "weight": 4, "required": false, "note": "sccache cold+warm llama.cpp CPU build; needs LLAMA_SRC"},
+    {"id": "vl-image-debian", "repo": "VictorLinux", "cwd": "debian-edition", "cmd": "sudo ./build.sh --profile amd", "needs": ["lb", "debootstrap", "xorriso", "mksquashfs", "root"], "weight": 4, "required": false, "note": "ISO build + boot test are NOT run by this runner; needs root + live-build + ~18 GiB"},
+    {"id": "vl-image-arch", "repo": "VictorLinux", "cwd": ".", "cmd": "scripts/build.sh amd gui", "needs": ["container-daemon"], "weight": 4, "required": false, "note": "needs a running Docker/Podman daemon with --privileged"},
+    {"id": "flash-rust-tests", "repo": "victorious-flash", "cwd": ".", "cmd": "cargo test -p flash-core -p victorious-flash-bridge", "needs": ["cargo"], "weight": 2, "required": true},
+    {"id": "flash-helper-build", "repo": "victorious-flash", "cwd": ".", "cmd": "cargo build --release -p victorious-flash-helper -p victorious-flash-bridge", "needs": ["cargo"], "deps": ["flash-rust-tests"], "weight": 2, "required": true},
+    {"id": "flash-tauri-bundle", "repo": "victorious-flash", "cwd": ".", "cmd": "npm ci && npx tauri build --bundles appimage,deb", "needs": ["npm", "pkg:webkit2gtk-4.1", "pkg:gtk+-3.0"], "deps": ["flash-helper-build"], "weight": 4, "required": true},
+    {"id": "dc-jvm-tests", "repo": "droidcommand-AI", "cwd": ".", "cmd": "./gradlew --no-daemon -q :core-fleet-worker:test :core-screen-adapter:test :core-remote-pc:test", "needs": ["java"], "env": {"VICTOR_FLEET_LIB": "@VictorLinux/fleet"}, "weight": 2, "required": true},
+    {"id": "dc-apk", "repo": "droidcommand-AI", "cwd": ".", "cmd": "./gradlew --no-daemon -PincludeAndroid=true :app:assembleDebug", "needs": ["java", "android-sdk"], "weight": 4, "required": true},
+    {"id": "rustdesk-android-apk", "repo": "rustdeskV", "cwd": "flutter", "cmd": "bash build_android.sh", "needs": ["flutter", "cargo", "android-sdk"], "weight": 4, "required": true, "note": "also needs NDK, vcpkg deps (build_android_deps.sh) and flutter_rust_bridge codegen"},
+    {"id": "rustdesk-linux-client", "repo": "rustdeskV", "cwd": ".", "cmd": "python3 build.py --flutter", "needs": ["flutter", "cargo", "python3"], "weight": 4, "required": true},
+    {"id": "victorsuite-apk", "repo": "VictorSuite", "cwd": ".", "cmd": "./gradlew --no-daemon :app:assembleDebug --stacktrace", "needs": ["java", "android-sdk"], "weight": 4, "required": true},
+    {"id": "filemanager-apk", "repo": "File-Manager", "cwd": ".", "cmd": "./gradlew --no-daemon :app:assembleDebug", "needs": ["java", "android-sdk"], "weight": 4, "required": true},
+    {"id": "mesh-apk", "repo": "victorious-mesh", "cwd": "android", "cmd": "(cd .. && ANDROID_NDK_HOME=\"$ANDROID_HOME/ndk/$NDK_VERSION\" ./scripts/build-aar.sh) && ./gradlew --no-daemon assembleDebug --stacktrace", "needs": ["java", "android-sdk", "go"], "weight": 4, "required": true, "note": "gomobile AAR first (needs Go + NDK_VERSION), then Gradle"},
+    {"id": "manifest-validate", "repo": "fleet-manifest", "cwd": ".", "cmd": "python3 -I -c \"import json,sys; from jsonschema import Draft202012Validator as V; s=json.load(open('schema.json')); d=json.load(open('fleet-manifest.json')); e=sorted(V(s).iter_errors(d), key=str); [print(x.message) for x in e]; sys.exit(1 if e else 0)\"", "needs": ["python3", "py:jsonschema"], "weight": 1, "required": true, "note": "validates the EXISTING feed; nothing is written to it"}
+  ]
+}

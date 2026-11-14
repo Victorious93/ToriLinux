@@ -23,6 +23,8 @@ def out(a, obj):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "fleet":      # fleet coordinator CLI lives in victor-fleet; same verbs, one entry point
+        os.execv("/usr/local/bin/victor-fleet", ["victor-fleet", *sys.argv[2:]])
     ap = argparse.ArgumentParser(prog="victor-ctl")
     ap.add_argument("--json", action="store_true")
     sp = ap.add_subparsers(dest="grp", required=True)

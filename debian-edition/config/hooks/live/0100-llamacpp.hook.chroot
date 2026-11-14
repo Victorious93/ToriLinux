@@ -15,13 +15,23 @@ git fetch -q --depth 1 origin "$LLAMACPP_COMMIT"
 git checkout -q FETCH_HEAD
 got="$(git rev-parse HEAD)"
 [ "$got" = "$LLAMACPP_COMMIT" ] || { echo "llama.cpp commit mismatch: $got != $LLAMACPP_COMMIT" >&2; exit 1; }
+# Optional build-only compiler cache (VICTOR_SCCACHE=1 staged by build.sh). Absent -> ordinary uncached build.
+LAUNCH=()
+SC=/usr/local/lib/victor-build/sccache
+if [ -x "$SC" ]; then
+  export SCCACHE_DIR=/var/cache/victor-sccache SCCACHE_CACHE_SIZE=2G SCCACHE_IDLE_TIMEOUT=0
+  "$SC" --start-server >/dev/null 2>&1 && "$SC" --zero-stats >/dev/null 2>&1 || true
+  LAUNCH=(-DCMAKE_C_COMPILER_LAUNCHER="$SC" -DCMAKE_CXX_COMPILER_LAUNCHER="$SC")
+  echo "compiler cache ON ($("$SC" --version)); C/C++ only (Vulkan shader sub-build is not wrapped)"
+fi
 # GGML_NATIVE=OFF + CPU_ALL_VARIANTS: one image runs on any x86-64 CPU (best variant chosen at runtime).
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_NATIVE=OFF \
   -DGGML_VULKAN=ON -DLLAMA_OPENSSL=ON -DLLAMA_CURL=OFF \
   -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
-  -DCMAKE_INSTALL_PREFIX=/opt/victorlinux/llama.cpp -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib'
+  -DCMAKE_INSTALL_PREFIX=/opt/victorlinux/llama.cpp -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib' "${LAUNCH[@]}"
 cmake --build build -j"$(nproc)"
+if [ -x "$SC" ]; then "$SC" --show-stats | sed -n '1,16p'; "$SC" --stop-server >/dev/null 2>&1 || true; fi
 cmake --install build
 mkdir -p /usr/share/victorlinux
 {

@@ -8,6 +8,16 @@ prefix=/opt/llama.cpp
 [ -f "$src/CMakeLists.txt" ] || { echo "llama.cpp source missing at $src (run scripts/prepare-sources.sh)"; exit 1; }
 jobs=$(nproc)
 
+# Optional build-only compiler cache (VICTOR_SCCACHE=1, see scripts/sccache-stage.sh). Absent -> ordinary uncached build.
+launcher=()
+sc=/usr/local/lib/victor-build/sccache
+if [ -x "$sc" ]; then
+  export SCCACHE_DIR=/var/cache/victor-sccache SCCACHE_CACHE_SIZE="${VICTOR_SCCACHE_MAX_MB:-2048}M" SCCACHE_IDLE_TIMEOUT=0
+  "$sc" --start-server >/dev/null 2>&1 && "$sc" --zero-stats >/dev/null 2>&1 || true
+  launcher=(-DCMAKE_C_COMPILER_LAUNCHER="$sc" -DCMAKE_CXX_COMPILER_LAUNCHER="$sc")
+  echo "===> compiler cache ON ($("$sc" --version)); C/C++ only (CUDA/HIP/Vulkan-shader sub-builds are not wrapped)"
+fi
+
 build_backend() {
   local name=$1; shift
   echo "===> llama.cpp backend: $name"
@@ -17,7 +27,7 @@ build_backend() {
     -DLLAMA_BUILD_NUMBER="{{ revisions.llamacpp|replace('b','') }}" -DLLAMA_BUILD_COMMIT="${rev:0:7}" \
     -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN' \
-    -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON "$@"
+    -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON "${launcher[@]}" "$@"
   cmake --build "/var/tmp/llama-build-$name" -j"$jobs" --target llama-server llama-bench llama-cli
   install -d "$prefix/$name/bin"
   # whole bin dir: executables + libggml*/libllama* + dynamically loaded backends sit together
@@ -50,3 +60,5 @@ build_backend hip -DGGML_HIP=ON -DAMDGPU_TARGETS="{{ build.hip_targets }}" \
   echo "llama.cpp revision: $(cat /root/sources/llama.cpp.rev)"
   echo "backends: $(ls "$prefix" | tr '\n' ' ')"
 } > "$prefix/BUILDINFO"
+
+if [ -x "$sc" ]; then "$sc" --show-stats | sed -n '1,16p'; "$sc" --stop-server >/dev/null 2>&1 || true; fi

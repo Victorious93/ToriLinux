@@ -5,7 +5,7 @@ from . import hw, models
 
 UNIT = "victor-llama"
 DEFAULTS = {"model": "", "backend": "auto", "ctx": 4096, "mem_limit_gb": 0.0, "port": 8080, "bind": "127.0.0.1",
-            "parallel": 1, "sleep_idle_minutes": 15, "jinja": False, "threads": 0,
+            "parallel": 1, "cache_ram_mb": "auto", "sleep_idle_minutes": 15, "jinja": False, "threads": 0,
             "remote": {"enabled": False, "tls": True, "vpn_plain_http_ack": False}}
 FORBIDDEN_FLAGS = ("--tools", "--webui-mcp-proxy", "--ui-mcp-proxy", "--mcp-servers", "--models-dir")
 
@@ -35,6 +35,9 @@ def validate(c):
         errs.append("port must be 1024-65535")
     if int(c["parallel"]) < 1 or int(c["parallel"]) > 8:
         errs.append("parallel must be 1-8")
+    cr = c.get("cache_ram_mb", "auto")
+    if cr != "auto" and not (isinstance(cr, int) and not isinstance(cr, bool) and 0 <= cr <= 65536):
+        errs.append("cache_ram_mb must be 'auto' or an integer 0-65536 MiB (0 = no prompt cache beyond the live slots)")
     if c["mem_limit_gb"] < 0:
         errs.append("mem_limit_gb must be >= 0 (0 = automatic)")
     try:
@@ -124,12 +127,26 @@ def is_running():
     return run(["systemctl", "--user", "is-active", UNIT]).stdout.strip() == "active"
 
 
-def build_command(c, backend, model_path, key_file=None, tls=None):
+def resolve_cache_ram_mb(c, model_bytes, mem_available_bytes):
+    """llama.cpp's own default is an 8192 MiB host-RAM prompt cache regardless of the machine. Bound it by what is actually free:
+    auto = min(8192, a quarter of the RAM left after the model and 2 GiB of headroom); an explicit number is honoured (0 disables)."""
+    v = c.get("cache_ram_mb", "auto")
+    if v != "auto":
+        return int(v)
+    if not mem_available_bytes:
+        return 1024                       # RAM unknown: stay small instead of inheriting the 8 GiB default
+    spare = mem_available_bytes - (model_bytes or 0) - (2 << 30)
+    return int(max(0, min(8192, spare // 4 // (1 << 20))))
+
+
+def build_command(c, backend, model_path, key_file=None, tls=None, cache_ram_mb=None):
     """Pure: returns llama-server argv. Never includes tool/MCP flags."""
     a = [LLAMA_SERVER, "-m", model_path, "-c", str(int(c["ctx"])), "--host", c["bind"], "--port", str(int(c["port"])),
          "-np", str(int(c["parallel"])), "--no-warmup"]
     if c.get("threads"):
         a += ["-t", str(int(c["threads"]))]
+    if cache_ram_mb is not None:
+        a += ["--cache-ram", str(int(cache_ram_mb))]
     if backend["accelerated"]:
         a += ["--device", backend["device"], "-ngl", "999"]
     else:
@@ -187,7 +204,8 @@ def start():
     remote = not ip.is_loopback
     key_file = ensure_key() if remote else None
     tls = ensure_tls(c["bind"]) if (remote and c["remote"]["tls"]) else None
-    argv = build_command(c, backend, mp, key_file, tls)
+    cache_mb = resolve_cache_ram_mb(c, info["size"], mem_info().get("available"))
+    argv = build_command(c, backend, mp, key_file, tls, cache_ram_mb=cache_mb)
     props = ["-p", f"MemoryMax={limit}", "-p", "MemorySwapMax=0", "-p", "NoNewPrivileges=yes", "-p", "PrivateTmp=yes",
              "-p", "ProtectSystem=strict", "-p", f"ReadWritePaths={RUN}"]
     r = run(["systemd-run", "--user", f"--unit={UNIT}", "--collect", "--quiet", *props, "--", *argv], timeout=30)

@@ -18,6 +18,13 @@ profile=$(sed -n 's/^PROFILE //p' /tmp/configure.out)
 [ -f airootfs/root/sources/llama.cpp.rev ] || { echo "run scripts/prepare-sources.sh first" >&2; exit 1; }
 if grep -q 'type=empty' <<<"$profile"; then rm -rf airootfs/root/sources; fi
 
+# fleet coordinator: shared implementation (fleet/), installed into the profile tree (git-ignored there)
+fleet/install.sh airootfs
+
+# optional, OFF by default: build-only compiler cache (VICTOR_SCCACHE=1). Staged into the git-ignored profile tree; the squashfs excludes it.
+scripts/sccache-stage.sh stage airootfs
+trap 'rm -rf airootfs/usr/local/lib/victor-build airootfs/var/cache/victor-sccache' EXIT
+
 # never ship stray bytecode caches from local test runs
 find airootfs -name __pycache__ -type d -prune -exec rm -rf {} +
 
@@ -33,6 +40,8 @@ for ((i=1; i<=MAX_TRIES; i++)); do
   echo "Build attempt $i/$MAX_TRIES failed" | tee -a "$log"
 done
 [ "$status" -eq 0 ] || { echo "BUILD FAILED after $MAX_TRIES attempts; see $log" >&2; exit 1; }
+# harvest the compiler cache from the work dir BEFORE it is deleted (only reached on success: the work dir is wiped on every retry)
+scripts/sccache-stage.sh harvest "$WORKDIR/x86_64/airootfs" || true
 rm -rf "$WORKDIR"
 
 iso=$(ls -t "$OUTDIR"/*.iso | head -n1)

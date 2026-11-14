@@ -8,7 +8,8 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const root = path.resolve(__dirname, '..', 'airootfs/usr/local');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'victorui-'));
 const env = {...process.env, HOME: tmp, XDG_CACHE_HOME: tmp + '/cache',
-  VICTOR_DATA: tmp + '/data', VICTOR_RUN_DIR: tmp + '/run', VICTOR_CC_PORT: '18788'};
+  VICTOR_DATA: tmp + '/data', VICTOR_RUN_DIR: tmp + '/run', VICTOR_CC_PORT: '18788',
+   VICTOR_FLEET_DIR: tmp + '/fleet', VICTOR_FLEET_BIN: path.resolve(__dirname, '..', 'fleet/bin/victor-fleet'), VICTOR_FLEET_LIB: path.resolve(__dirname, '..', 'fleet')};
 fs.mkdirSync(tmp + '/data/models', {recursive: true});
 const cc = spawn('python3', ['-I', root + '/lib/victorlinux/control_center.py'], {env});
 let output = '';
@@ -32,11 +33,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }}));
   await page.goto('http://127.0.0.1:18788/#t=' + token);
   await page.waitForFunction(() => !['storage…', 'storage...'].includes(document.querySelector('#storagePill').textContent));
-  assert.equal(await page.locator('#nav button').count(), 5);
+  assert.equal(await page.locator('#nav button').count(), 6);
   const csp = (await page.request.get('http://127.0.0.1:18788/')).headers()['content-security-policy'];
   assert.match(csp, /script-src[^;]*nonce-/);
   assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
   console.log('PASS real server, authenticated status, CSP nonce');
+  // Fleet tab: start / pair / stop the real coordinator through the UI
+  await page.locator('[data-t="fleet"]').click();
+  await page.waitForFunction(() => /stopped/i.test(document.getElementById('fOut').textContent));
+  await page.click('#fStart');
+  await page.waitForFunction(() => /running on 127\.0\.0\.1/.test(document.getElementById('fOut').textContent), null, {timeout: 15000});
+  await page.click('#fPair');
+  await page.waitForFunction(() => /Pairing secret/.test(document.getElementById('fOut').textContent) && /[0-9a-f]{64}/.test(document.getElementById('fOut').textContent));
+  await page.click('#fStop'); await sleep(1500); await page.click('#fRef');
+  await page.waitForFunction(() => /stopped/i.test(document.getElementById('fOut').textContent));
+  console.log('PASS fleet tab start/pair/stop');
   await page.locator('[data-t="remote"]').click();
   await page.locator('#rEn').check(); await page.locator('#rTls').check();
   await page.locator('#rBind').fill('100.64.0.9'); await page.locator('#rPort').fill('9090');
@@ -64,7 +75,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('PASS host memory pool and ranked-model advice render');
   for (const width of [1366, 768, 390]) {
    await page.setViewportSize({width, height: 900});
-   for (const tab of ['dash', 'models', 'storage', 'remote', 'logs']) {
+   for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
     await page.locator(`[data-t="${tab}"]`).click();
     assert.equal(await page.locator(`#t-${tab}`).isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,

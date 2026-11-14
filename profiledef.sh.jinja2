@@ -13,6 +13,11 @@ arch="x86_64"
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
 airootfs_image_tool_options=("-comp" "zstd" "-Xcompression-level" "15" "-b" "1M")
+{% if sccache %}
+# VICTOR_SCCACHE=1 build: the compiler wrapper and its cache live in the airootfs work dir only so build-inner.sh can harvest
+# the cache afterwards. They are EXCLUDED from the squashfs, so they can never ship in the ISO.
+airootfs_image_tool_options+=("-e" "var/cache/victor-sccache" "usr/local/lib/victor-build")
+{% endif %}
 file_permissions=(
   ["/etc/gshadow"]="0:0:400"
   ["/etc/shadow"]="0:0:400"
