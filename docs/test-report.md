@@ -44,8 +44,18 @@ no network card attached unless stated).
 * **Any physical GPU.** No Vulkan device, VRAM reading, offload log (`offloaded N/M layers`) or tokens/s on the **RX 6800 XT** has been observed.
   The only performance number is a CPU smoke test: llama-bench, 4 vCPU, 17 MiB test model: pp128 ~11.8k t/s, tg32 ~1.56k t/s (meaningless for real models).
 * Physical USB flashing (no removable drive was attached), Secure Boot, real firmware/USB-controller quirks, speed of a real stick.
-* The `cuda` platform, the `hip`/ROCm pack and all image-generation packs (ComfyUI, SD.Next, InvokeAI, SillyTavern, vllm): rendered only, **not built**.
-* The `gui` image (Openbox + Firefox autostart): rendered and shellchecked only, not built or booted.
+* The `hip`/ROCm pack: a build was attempted and **failed** (the build host's disk allowance could not hold the ROCm SDK: "could not extract ... rocfft (Write failed)"). Unbuilt, unverified.
+* All image-generation packs (ComfyUI, SD.Next, InvokeAI, SillyTavern, vllm): rendered only, **not built** (download.pytorch.org is unreachable from the build host).
+* Boot of the `gui` and `cuda` images: both ISOs **built** (below) but neither was booted. No NVIDIA GPU was available, so the CUDA backend has not run.
+
+## Additional builds (build-only evidence)
+
+| Image | Size (bytes) | SHA-256 |
+|---|---|---|
+| `torilinux-amd-gui-2026-11-14_06-16-04` | 2,213,314,560 | see `.sha256` / manifest-20261114T061603Z.json |
+| `torilinux-cuda-gui-2026-11-14_07-02-47` | 5,878,272,000 | `1372441e9b0f0c19a92d0994b366419807d7b0d876e8879b163090e7a797d77b` |
+
+The CUDA image ships cuda 13.4.3 and nvidia-utils 620.70.06 from the pinned Arch snapshot; that driver branch supports Turing and newer only (Pascal dropped). The nvidia-pstated source is now prefetched and sha256-verified on the host (the in-chroot wget TLS failure is fixed).
 * GitHub Actions workflows: written, not executed.
 * HTTPS (`tori-tls-cert`) and SSH enable/disable on a booted image (key validation was tested on a host; sshd start was not).
 * Tailscale/Headscale and the DroidCommand-AI app; VictorSuite adapter on a phone.
