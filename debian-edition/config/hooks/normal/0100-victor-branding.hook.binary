@@ -1,16 +1,18 @@
 #!/bin/sh
-# Binary-stage hook (runs in the live-build work dir after the bootloaders are laid out, before the ISO is made).
+# Binary-stage hook (live-build runs it with cwd = binary/, after the bootloaders are laid out, before the ISO is made).
 # live-build hard-codes the generic menu labels ("Live system (amd64)", "Boot menu"); rebrand them for VictorLinux.
 # Fails the build if an expected file/label is missing, so a live-build change cannot silently undo the branding.
 set -eu
 need() { [ -f "$1" ] || { echo "branding hook: missing $1" >&2; exit 1; }; }
-need binary/isolinux/live.cfg; need binary/isolinux/menu.cfg; need binary/boot/grub/grub.cfg
-sed -i -e 's|menu label ^Live system (\([^)]*\) fail-safe mode)|menu label VictorLinux (\1, fail-safe mode)|' \
-       -e 's|menu label ^Live system (\([^)]*\))|menu label ^VictorLinux (\1)|' binary/isolinux/live.cfg
-sed -i -e 's|^menu title .*|menu title VictorLinux|' binary/isolinux/menu.cfg
+need isolinux/live.cfg; need isolinux/menu.cfg; need boot/grub/grub.cfg
+sed -i -e 's|menu label \^\{0,1\}Live system (\([^)]*\) fail-safe mode)|menu label VictorLinux (\1, fail-safe mode)|' \
+       -e 's|menu label \^\{0,1\}Live system (\([^)]*\))|menu label ^VictorLinux (\1)|' isolinux/live.cfg
+sed -i -e 's|^menu title .*|menu title VictorLinux|' isolinux/menu.cfg
 sed -i -e 's|menuentry "Live system (\([^)]*\) fail-safe mode)"|menuentry "VictorLinux (\1, fail-safe mode)"|' \
-       -e 's|menuentry "Live system (\([^)]*\))"|menuentry "VictorLinux (\1)"|' binary/boot/grub/grub.cfg
-grep -q 'VictorLinux' binary/isolinux/live.cfg && grep -q 'VictorLinux' binary/boot/grub/grub.cfg && grep -q 'title VictorLinux' binary/isolinux/menu.cfg \
+       -e 's|menuentry "Live system (\([^)]*\))"|menuentry "VictorLinux (\1)"|' boot/grub/grub.cfg
+grep -q 'VictorLinux' isolinux/live.cfg && grep -q 'VictorLinux' boot/grub/grub.cfg && grep -q 'title VictorLinux' isolinux/menu.cfg \
   || { echo "branding hook: expected VictorLinux labels not found after rewrite" >&2; exit 1; }
-if grep -rqE 'Debian GNU/Linux|live-build' binary/isolinux/*.cfg binary/boot/grub/*.cfg 2>/dev/null; then
+# live-build only blanks the GRUB theme title when it uses its own fallback splash; with ours it would show "Live Boot Menu with GRUB"
+[ -f boot/grub/live-theme/theme.txt ] && sed -i -e 's|^title-text:.*|title-text: ""|' boot/grub/live-theme/theme.txt
+if grep -rqE 'Live system|Debian GNU/Linux|live-build' isolinux/*.cfg boot/grub/*.cfg 2>/dev/null; then
   echo "branding hook: generic Debian/live-build text remains in boot menus" >&2; exit 1; fi

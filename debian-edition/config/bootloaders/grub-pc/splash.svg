@@ -11,6 +11,5 @@
     <text x="74" y="190" font-size="13" fill="#a8b3c7">Built: @YEAR@-@MONTH@-@DAY@ @HOUR@:@MINUTE@:@SECOND@ @TIMEZONE@</text>
     <text x="74" y="212" font-size="12" fill="#7d889b">linux: @LINUX_VERSIONS@</text>
     <text x="74" y="230" font-size="12" fill="#7d889b">live-boot: @LIVE_BOOT_VERSION@</text>
-    <text x="74" y="270" font-size="12" fill="#7d889b">Runs from RAM; only the VICTORDATA partition persists. Offline by default.</text>
   </g>
 </svg>
