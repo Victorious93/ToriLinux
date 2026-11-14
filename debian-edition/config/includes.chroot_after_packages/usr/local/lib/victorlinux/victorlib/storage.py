@@ -24,13 +24,13 @@ def parse_lsblk(js):
 
 
 def candidates(devs):
-    """Partitions that look like VictorLinux data: ext4 + label VICTORDATA + UUID."""
+    """Partitions that look like VictorLinux data: ext4 + label VICTORDATA or TORIDATA + UUID."""
     res = []
     for d in devs:
-        if d.get("fstype") == "ext4" and d.get("label") == DATA_LABEL and d.get("uuid"):
+        if d.get("fstype") == "ext4" and d.get("label") in DATA_LABELS and d.get("uuid"):
             disk = d["_parent"] or {}
             res.append({
-                "uuid": d["uuid"], "path": d.get("path") or f"/dev/{d.get('name')}",
+                "uuid": d["uuid"], "label": d.get("label"), "path": d.get("path") or f"/dev/{d.get('name')}",
                 "size": int(d.get("size") or 0),
                 "model": (disk.get("model") or "").strip(), "serial": (disk.get("serial") or "").strip(),
                 "transport": disk.get("tran") or "", "removable": bool(disk.get("rm")),
@@ -47,12 +47,12 @@ def decide(cands, selected_uuid=None):
                 return "mount", selected_uuid, "selected partition"
         return "missing", None, f"The selected data partition (UUID {selected_uuid}) is not attached."
     if not cands:
-        return "missing", None, ("No VICTORDATA partition found. Plug in the prepared VictorLinux USB, or start a "
+        return "missing", None, ("No VICTORDATA/TORIDATA partition found. Plug in the prepared VictorLinux USB, or start a "
                                  "temporary session (nothing is saved).")
     if len(cands) > 1:
-        return "needs-selection", None, (f"{len(cands)} VICTORDATA partitions are attached; choose one explicitly "
+        return "needs-selection", None, (f"{len(cands)} VICTORDATA/TORIDATA partitions are attached; choose one explicitly "
                                          "(refusing to guess).")
-    return "mount", cands[0]["uuid"], "single VICTORDATA partition found"
+    return "mount", cands[0]["uuid"], "single VICTORDATA/TORIDATA partition found"
 
 
 def classify_mounted(mountpoint, opts, free_bytes, writable):
