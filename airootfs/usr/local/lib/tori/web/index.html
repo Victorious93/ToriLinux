@@ -94,6 +94,13 @@ code{background:#0d1117;padding:1px 5px;border-radius:4px}#toast{position:fixed;
   <div class="row"><button class="b s" id="bSshAdd">Add key</button><input id="sshListen" value="127.0.0.1" style="width:150px" title="Listen address">
   <button class="b" id="bSshOn">Enable</button><button class="b s" id="bSshOff">Disable</button><button class="b d" id="bSshReset">Remove all keys &amp; disable</button></div></div>
 </section>
+<section id="t-fleet">
+ <div class="card"><h2>Phone fleet</h2><p class="mut">Coordinator for up to 4 DroidCommand phones. Off until you start it; local-only until fleet networking is enabled (<code>victor-fleet config --enable-network ADDR</code>). Phones keep their own approvals; Revoke takes effect immediately.</p>
+  <div class="row"><button class="b" id="fStart">Start</button><button class="b d" id="fStop">Stop</button><button class="b s" id="fRef">Refresh</button><button class="b" id="fPair">Pair phone</button></div>
+  <pre id="fOut"></pre></div>
+ <div class="card"><h2>Devices</h2><div id="fDevs"></div></div>
+ <div class="card"><h2>Plans</h2><div id="fPlans"></div></div>
+</section>
 <section id="t-logs">
  <div class="card"><h2><svg><use href="#i-log"/></svg>Logs</h2><div class="row"><select id="lSel"></select><button class="b s" id="bLog">Refresh</button></div><pre id="logOut"></pre></div>
  <div class="card"><h2>Diagnostics</h2><div class="row"><button class="b" id="bDiag">Collect</button><button class="b s" id="bCopy">Copy to clipboard</button></div><pre id="diagOut"></pre></div>
@@ -109,9 +116,16 @@ async function api(p,body){const r=await fetch(p,{method:body===undefined?"GET":
 function toast(m,k){const d=document.createElement("div");d.className="banner "+(k||"ok");d.textContent=m;$("toast").appendChild(d);setTimeout(()=>d.remove(),k==="bad"?12000:5000)}
 function res(j,okm){if(j&&(j.ok===false||j.error)){toast(j.error||"failed","bad");return false}toast(okm||j.message||"Done");return true}
 const G=n=>n==null?"?":(n/2**30).toFixed(1)+" GiB";
-const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["storage","disk","Storage"],["remote","net","Server & Access"],["logs","log","Logs & Diagnostics"]];
+const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["storage","disk","Storage"],["remote","net","Server & Access"],["fleet","net","Fleet"],["logs","log","Logs & Diagnostics"]];
 $("nav").innerHTML=tabs.map(t=>`<button data-t="${t[0]}"><svg><use href="#i-${t[1]}"/></svg>${t[2]}</button>`).join("");
-function show(t){document.querySelectorAll("section").forEach(s=>s.classList.toggle("on",s.id==="t-"+t));document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="logs")loadLog();}
+function show(t){document.querySelectorAll("section").forEach(s=>s.classList.toggle("on",s.id==="t-"+t));document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="logs")loadLog();if(t==="fleet")loadFleet();}
+async function fleetAct(cmd,arg){const j=await api("/api/fleet/action",{cmd,arg});if(j.error){toast(j.error,"bad");return}if(cmd==="pair"){$("fOut").textContent="PAIRING (single use, expires in "+j.expires_in_s+"s)\nCoordinator: "+j.coordinator_url+"\nVerify this fingerprint matches the phone's screen BEFORE approving:\n  "+j.coordinator_fingerprint_sha256+"\nPairing secret (type it on the phone):\n  "+j.pairing_secret}else if(cmd==="review"||cmd==="report"){$("fOut").textContent=JSON.stringify(j,null,2)}else{toast(j.message||"Done")}loadFleet(cmd==="pair"||cmd==="review"||cmd==="report")}
+async function loadFleet(keep){const s=await api("/api/fleet");if(s.error){$("fOut").textContent=s.error;return}
+ if(!keep)$("fOut").textContent=s.running?("running on "+s.bind+(s.network_enabled?"":" (local-only)")+"\nfingerprint sha256:"+s.fingerprint_sha256+"\njobs: "+JSON.stringify(s.job_counts)+(s.durability_warning?"\nWARNING: "+s.durability_warning:"")):"Coordinator is stopped."+(s.persistence&&!s.persistence.durable?"\nWARNING: state would NOT be durable: "+s.persistence.reason:"");
+ $("fDevs").innerHTML=(s.devices||[]).map(d=>{const st=d.device_state||{},rt=(d.capabilities||{}).root||{};return `<div class="row"><b>${esc(d.name)}</b> <span class="mut">${esc(d.state)}${d.paused?" paused":""}${d.enabled?"":" disabled"} · ${d.connected?"connected":"offline"} · battery ${esc(st.battery_percent??"?")}% · thermal ${esc(st.thermal??"?")} · root ${rt.granted?"granted":"no"} · jobs ${d.active_jobs.length}</span> <button class="b s" data-c="pause" data-a="${esc(d.id)}">Pause</button><button class="b s" data-c="resume" data-a="${esc(d.id)}">Resume</button><button class="b d" data-c="revoke" data-a="${esc(d.id)}">Revoke</button></div>`}).join("")||"<p class=mut>No paired phones.</p>";
+ $("fPlans").innerHTML=(s.plans||[]).map(p=>`<div class="row"><b>${esc(p.title)}</b> <span class="mut">${esc(p.state)} · ${esc(p.id)}</span> <button class="b s" data-c="review" data-a="${esc(p.id)}">Review</button><button class="b" data-c="approve" data-a="${esc(p.id)}">Approve</button><button class="b s" data-c="report" data-a="${esc(p.id)}">Report</button><button class="b d" data-c="cancel" data-a="${esc(p.id)}">Cancel</button></div>`).join("")||"<p class=mut>No plans.</p>"}
+document.addEventListener("click",e=>{const b=e.target.closest("button[data-c]");if(b){if(b.dataset.c==="revoke"&&!confirm("Revoke this phone? Its credential stops working immediately."))return;fleetAct(b.dataset.c,b.dataset.a)}});
+document.addEventListener("DOMContentLoaded",()=>{for(const [id,c] of [["fStart","start"],["fStop","stop"],["fPair","pair"]])$(id).onclick=()=>fleetAct(c);$("fRef").onclick=()=>loadFleet()});
 $("nav").onclick=e=>{const b=e.target.closest("button");if(b)show(b.dataset.t)};
 let S=null;
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}

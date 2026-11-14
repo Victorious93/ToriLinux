@@ -105,6 +105,34 @@ class App:
             except ProcessLookupError:
                 pass
 
+    FLEET_ID = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
+    FLEET_ACTIONS = {"start": 0, "stop": 0, "pair": 0, "pause": 1, "resume": 1, "enable": 1, "disable": 1, "revoke": 1,
+                     "approve": 1, "cancel": 1, "review": 1, "report": 1}
+
+    def fleet(self, args, timeout=30):
+        """Thin wrapper over the victor-fleet CLI (single coordinator authority). No shell; args are validated by the caller."""
+        try:
+            r = subprocess.run([os.environ.get("VICTOR_FLEET_BIN", "/usr/local/bin/victor-fleet"), *args], capture_output=True, text=True, timeout=timeout,
+                               env=dict(os.environ, PYTHONPATH=os.environ.get("VICTOR_FLEET_LIB", "/usr/local/lib/victorfleet")))
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"error": f"fleet CLI unavailable: {e}"}
+        if r.returncode != 0:
+            return {"error": (r.stderr or r.stdout).strip() or f"exit {r.returncode}"}
+        try:
+            return json.loads(r.stdout)
+        except ValueError:
+            return {"message": r.stdout.strip()}
+
+    def fleet_action(self, b):
+        cmd, arg = b.get("cmd"), b.get("arg")
+        want = self.FLEET_ACTIONS.get(cmd)
+        if want is None:
+            return 400, {"error": "unknown fleet action"}
+        if want and not (isinstance(arg, str) and self.FLEET_ID.match(arg)):
+            return 400, {"error": "a valid device/plan id is required"}
+        r = self.fleet([cmd] + ([arg] if want else []), timeout=60)
+        return (400 if isinstance(r, dict) and r.get("error") else 200), r
+
     def tail(self, name, n=200):
         p = self.logpath(name)
         try:
@@ -455,6 +483,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if name not in ("llama", "gateway") + tuple(SERVICES):
                     return self._send(400, {"error": "unknown log"})
                 return self._send(200, {"log": APP.tail(name, int(q.get("n", ["300"])[0]))})
+            if u.path == "/api/fleet":
+                st = APP.fleet(["status"])
+                st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
+                return self._send(200, st)
             if u.path == "/api/diagnostics":
                 return self._send(200, {"text": APP.diagnostics()})
             if u.path == "/api/import/status":
@@ -500,6 +532,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/fleet/action":
+                return self._send(*APP.fleet_action(b))
             if p == "/api/llm/start":
                 return self._send(200, APP.start_llm(tc.load_settings()))
             if p == "/api/llm/stop":

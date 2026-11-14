@@ -59,6 +59,8 @@ cp -a "$HERE/config/package-lists/." config/package-lists/
 cp -a "$HERE/config/hooks/live/." config/hooks/live/
 mkdir -p config/includes.chroot_after_packages
 cp -a "$HERE/config/includes.chroot_after_packages/." config/includes.chroot_after_packages/
+# fleet coordinator: one shared implementation (fleet/), installed into this edition's tree at build time
+"$HERE/../fleet/install.sh" config/includes.chroot_after_packages
 if [ "$PROFILE" = nvidia ]; then
   cp config/package-lists/90-nvidia.list.chroot.nvidia config/package-lists/90-nvidia.list.chroot
 fi
