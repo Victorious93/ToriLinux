@@ -57,6 +57,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.reload(); await page.waitForFunction(() => document.querySelector('#sCtx').value === '8192');
   assert.equal(await page.locator('#sCtxAuto').isChecked(), false, 'manual context choice persists');
   console.log('PASS runtime settings save and reload');
+  await page.locator('[data-t="dash"]').click();
   await page.locator('#bAdvice').click();
   await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
   assert.equal(await page.locator('#advice').textContent().then(t => t.includes('Optional catalog (not downloaded)')), true);
