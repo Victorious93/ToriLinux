@@ -8,7 +8,8 @@ STATE_FILE = f"{RUN}/storage.json"
 LLAMA_DIR = os.environ.get("VICTOR_LLAMA_DIR", "/opt/victorlinux/llama.cpp")
 LLAMA_SERVER = f"{LLAMA_DIR}/bin/llama-server"
 LLAMA_BENCH = f"{LLAMA_DIR}/bin/llama-bench"
-DATA_LABEL = "VICTORDATA"
+DATA_LABEL = "VICTORDATA"            # label written by provision-usb.py
+DATA_LABELS = ("VICTORDATA", "TORIDATA")   # accepted labels (TORIDATA = the Arch edition, so one drive serves both)
 SUBDIRS = ["models", "chat", "settings", "images", "llama", "kali", "documents", "logs", "secrets"]
 MIN_FREE_BYTES = 256 * 1024 * 1024
 

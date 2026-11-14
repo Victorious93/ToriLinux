@@ -2,7 +2,7 @@
 """victor-priv: the ONLY root-level helper for the Control Center. Fixed verbs, strict argument validation.
 
 Callable by the owner via sudoers (no password) for exactly this file. It never executes caller-supplied
-commands, mounts only partitions that are ext4 + label VICTORDATA, and only reads owner-readable key files.
+commands, mounts only partitions that are ext4 + label VICTORDATA or TORIDATA, and only reads owner-readable key files.
 """
 import json, os, pwd, re, shutil, subprocess, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
@@ -56,7 +56,7 @@ def cmd_mount(uuid):
     if uuid not in cands:
         if not os.path.ismount(DATA_MP):      # never clobber the state of a healthy, already-mounted partition
             set_state("missing", f"Data partition {uuid} is not attached.")
-        die(f"No ext4 partition labelled {DATA_LABEL} with UUID {uuid} is attached.")
+        die(f"No ext4 partition labelled {" or ".join(DATA_LABELS)} with UUID {uuid} is attached.")
     c = cands[uuid]
     uid, gid = uid_gid()
     os.makedirs(RUN, exist_ok=True)

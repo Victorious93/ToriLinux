@@ -31,3 +31,11 @@ on the data partition from another machine.
 
 ## Flash wear
 journald is volatile; logs are snapshots with rotation; the data mount uses `noatime`; no swap; models are written once at import.
+
+## Sharing one drive with the Arch edition
+
+The Debian edition accepts an ext4 partition labelled **`VICTORDATA`** (what `provision-usb.py` writes) **or `TORIDATA`** (what the Arch edition's
+`scripts/make-usb.sh` writes), so one data partition can serve either OS. Rules: the label match is exact and case-sensitive; if more than one candidate is
+attached (any mix of the two labels) nothing is mounted until you choose one explicitly. Each edition keeps its own directory layout on the partition and
+neither migrates or deletes the other's files; secrets (API key, TLS key) are per-edition. Tested by unit tests only (label policy); a real drive shared
+between both editions has NOT been tested.

@@ -46,6 +46,19 @@ class Storage(unittest.TestCase):
         c = storage.candidates(storage.parse_lsblk(lsblk_fixture([part("a", label="OTHER"), part("b", fs="exfat"), part("c")])))
         self.assertEqual([x["uuid"] for x in c], ["c"])
 
+    def test_toridata_label_accepted_case_sensitive(self):
+        c = storage.candidates(storage.parse_lsblk(lsblk_fixture([
+            part("t", label="TORIDATA"), part("l", label="toridata"), part("v", label="VICTORDATA"), part("x", label="TORIDATA2")])))
+        self.assertEqual(sorted(x["uuid"] for x in c), ["t", "v"])
+        self.assertEqual({x["uuid"]: x["label"] for x in c}, {"t": "TORIDATA", "v": "VICTORDATA"})
+
+    def test_toridata_alone_mounts_but_mixed_labels_need_explicit_choice(self):
+        one = storage.candidates(storage.parse_lsblk(lsblk_fixture([part("t", label="TORIDATA")])))
+        self.assertEqual(storage.decide(one), ("mount", "t", "single VICTORDATA/TORIDATA partition found"))
+        both = storage.candidates(storage.parse_lsblk(lsblk_fixture([part("t", label="TORIDATA"), part("v")])))
+        self.assertEqual(storage.decide(both)[:2], ("needs-selection", None))
+        self.assertEqual(storage.decide(both, "t")[:2], ("mount", "t"))
+
     def test_single_mounts_none_missing_multiple_requires_choice(self):
         self.assertEqual(storage.decide(self.cands("u1"))[0], "mount")
         self.assertEqual(storage.decide([])[0], "missing")
