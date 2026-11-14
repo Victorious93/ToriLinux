@@ -55,6 +55,7 @@ pre{background:#0c1420;border:1px solid var(--bd);border-radius:18px;padding:16p
   <label>Model (.gguf)</label><select id="mSel" style="width:100%"></select>
   <div class="row"><div><label>Backend</label><select id="sBackend"><option>auto</option><option>vulkan</option><option>hip</option><option>cuda</option><option>cpu</option></select></div>
   <div><label>Context length</label><input id="sCtx" type="number" min="256" step="256" style="width:110px"></div>
+  <div><label>Auto context</label><label class="mut" style="display:block"><input id="sCtxAuto" type="checkbox"> size from this PC's free memory at every start</label></div>
   <div><label>GPU layers (-1 auto)</label><input id="sNgl" type="number" style="width:90px"></div>
   <div><label>Threads (0 auto)</label><input id="sThr" type="number" style="width:80px"></div>
   <div><label>RAM cap MiB (0 none)</label><input id="sMem" type="number" style="width:100px"></div>
@@ -113,6 +114,7 @@ $("nav").innerHTML=tabs.map(t=>`<button role="tab" id="tab-${t[0]}" aria-control
 function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on))});sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="logs")loadLog()}
 $("nav").onclick=e=>{const b=e.target.closest("button");if(b)show(b.dataset.t)};
 let S=null,remoteDirty=false;
+$("sCtxAuto").addEventListener("change",()=>{$("sCtx").disabled=$("sCtxAuto").checked});
 ["rBind","rPort","rEn","rTls"].forEach(id=>$(id).addEventListener("input",()=>remoteDirty=true));
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 async function refresh(){const s=await api("/api/status");if(s.error){$("banners").innerHTML=`<div class="banner bad">${esc(s.error)}</div>`;return}
@@ -134,14 +136,14 @@ async function refresh(){const s=await api("/api/status");if(s.error){$("banners
  fillSettings(s);fillRemote(s);
 }
 let filled=false;function fillSettings(s){if(filled)return;filled=true;const c=s.settings;["Backend","Ctx","Ngl","Thr","Mem","Idle"].forEach(()=>{});
- $("sBackend").value=c.backend;$("sCtx").value=c.ctx;$("sNgl").value=c.gpu_layers;$("sThr").value=c.threads;$("sMem").value=c.memory_limit_mb;$("sIdle").value=c.idle_unload_s;loadModels()}
+ $("sBackend").value=c.backend;$("sCtx").value=c.ctx;$("sCtxAuto").checked=c.ctx_auto!==false;$("sCtx").disabled=c.ctx_auto!==false;$("sNgl").value=c.gpu_layers;$("sThr").value=c.threads;$("sMem").value=c.memory_limit_mb;$("sIdle").value=c.idle_unload_s;loadModels()}
 async function loadModels(){const j=await api("/api/models");if(j.error)return;const cur=S.settings.model;$("mSel").innerHTML=`<option value="">(none)</option>`+j.models.map(m=>`<option value="${esc(m.path)}" ${m.path===cur?"selected":""}>${esc(m.name)} — ${G(m.size)}</option>`).join("");
  $("dirs").innerHTML=j.dirs.filter(Boolean).map(esc).join("<br>");if(cur)estimate()}
 async function estimate(){const p=$("mSel").value;if(!p){$("est").textContent="Pick a model to see the estimate.";return}const j=await api(`/api/estimate?path=${encodeURIComponent(p)}&ctx=${$("sCtx").value}`);
  if(j.error){$("est").innerHTML=`<span class="bad">${esc(j.error)}</span>`;return}const e=j.estimate;
  $("est").innerHTML=`<b>${esc(e.arch||"?")}</b> · weights ${G(e.weights)} + KV cache ${e.kv_known?G(e.kv_cache):"unknown"} + overhead ${G(e.overhead)} = <b>~${G(e.total)}</b> needed · free VRAM ${G(j.vram_free)} · free disk where stored ${G(j.disk)}<br>`+j.fit.notes.map(n=>`<div class="${j.fit.level==="ok"?"ok":j.fit.level==="warn"?"warn":"bad"}">${esc(n)}</div>`).join("")}
 $("mSel").onchange=estimate;$("bEst").onclick=estimate;
-$("bSave").onclick=async()=>{if(res(await api("/api/settings",{model:$("mSel").value,backend:$("sBackend").value,ctx:+$("sCtx").value,gpu_layers:+$("sNgl").value,threads:+$("sThr").value,memory_limit_mb:+$("sMem").value,idle_unload_s:+$("sIdle").value}),"Settings saved"))refresh()};
+$("bSave").onclick=async()=>{if(res(await api("/api/settings",{model:$("mSel").value,backend:$("sBackend").value,ctx:+$("sCtx").value,ctx_auto:$("sCtxAuto").checked,gpu_layers:+$("sNgl").value,threads:+$("sThr").value,memory_limit_mb:+$("sMem").value,idle_unload_s:+$("sIdle").value}),"Settings saved"))refresh()};
 $("bDir").onclick=async()=>{const d=$("dAdd").value.trim();if(!d)return;const cur=S.settings.extra_model_dirs.concat([d]);if(res(await api("/api/settings",{extra_model_dirs:cur}),"Directory added")){filled=false;await refresh();loadModels()}};
 $("bStart").onclick=async()=>{$("bStart").disabled=true;toast("Starting… (large models take a while to load)");const j=await api("/api/llm/start",{});if(j.ok){toast("Server started")}else{toast(j.error+(j.log?"\n"+j.log.slice(-400):""),"bad")}refresh()};
 $("bStop").onclick=async()=>{if(res(await api("/api/llm/stop",{}),"Stopped; model unloaded"))refresh()};
@@ -172,7 +174,10 @@ $("bLog").onclick=loadLog;$("lSel").onchange=loadLog;
 $("bDiag").onclick=async()=>{const j=await api("/api/diagnostics");$("diagOut").textContent=j.text||j.error};
 $("bCopy").onclick=async()=>{try{await navigator.clipboard.writeText($("diagOut").textContent);toast("Copied")}catch(e){toast("Copy failed; select the text manually","warn")}};
 $("bReboot").onclick=async()=>{if(confirm("Reboot now?"))res(await api("/api/power",{action:"reboot"}))};$("bOff").onclick=async()=>{if(confirm("Power off now?"))res(await api("/api/power",{action:"poweroff"}))};
-$("bAdvice").onclick=async()=>{$("bAdvice").disabled=true;$("advice").textContent="Checking this PC…";const j=await api("/api/recommendations");$("bAdvice").disabled=false;if(j.error){$("advice").textContent=j.error;return}$("advice").innerHTML=`<p><b>${esc(j.cpu.name)}</b> · ${j.cpu.threads} logical CPUs · ${G(j.ram.available)} RAM available</p><p class="mut">${esc(j.note)}</p>`+j.models.map(m=>`<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="recommended"?"ok":"warn"}">${esc(m.fit)}</span><p class="mut">~${G(m.estimated_total)} at ${m.context} context · ${esc(m.reason)}</p><a href="${esc(m.source)}" target="_blank" rel="noreferrer">Official model card ↗</a></div>`).join("")};
+$("bAdvice").onclick=async()=>{$("bAdvice").disabled=true;$("advice").textContent="Checking this PC…";const j=await api("/api/recommendations");$("bAdvice").disabled=false;if(j.error){$("advice").textContent=j.error;return}const h=j.host||{};const vt={"verified-here":["ok","Loaded and generated on this PC"],"verified-elsewhere":["warn","Worked on other hardware; re-test here"],untested:["warn","Not tested on this PC"]};
+$("advice").innerHTML=`<p><b>${esc(j.cpu.name)}</b> · ${j.cpu.threads} logical CPUs · ${G(j.ram.available)} RAM available</p><p class="mut">Memory pool: ${esc(h.memory_kind||"?")}${h.device?" · "+esc(h.device):""} · planning budget ${G(h.budget||0)} · default threads ${h.threads_default||"?"}</p>`+(h.notes||[]).map(n=>`<p class="mut">${esc(n)}</p>`).join("")+
+(j.local&&j.local.length?`<h3>Your models, ranked for this PC</h3><p class="mut">${esc(j.local_note)}</p>`+j.local.map(m=>{const v=vt[m.verified]||vt.untested;return `<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="fits"?"ok":"warn"}">${esc(m.fit)}</span> <span class="pill ${v[0]}">${esc(v[1])}</span><p class="mut">${m.ctx?`~${G(m.estimated_total)} at ${m.ctx} context · `:""}${esc(m.reason)}</p></div>`}).join(""):"")+
+`<h3>Optional catalog (not downloaded)</h3><p class="mut">${esc(j.note)}</p>`+j.models.map(m=>`<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="recommended"?"ok":"warn"}">${esc(m.fit)}</span><p class="mut">~${G(m.estimated_total)} at ${m.context} context · ${esc(m.reason)}</p><a href="${esc(m.source)}" target="_blank" rel="noreferrer">Official model card ↗</a></div>`).join("")};
 document.querySelectorAll("label").forEach(label=>{const next=label.nextElementSibling;if(next&&next.id&&["INPUT","SELECT"].includes(next.tagName))label.htmlFor=next.id});
 show(sessionStorage.tab||"dash");refresh();setInterval(refresh,4000);
 </script></body></html>

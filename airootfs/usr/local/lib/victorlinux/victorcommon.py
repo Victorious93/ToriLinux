@@ -22,7 +22,8 @@ SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs"
 DEFAULT_SETTINGS = {
     "backend": "auto",            # auto | vulkan | hip | cuda | cpu
     "model": "",                  # absolute path to a .gguf
-    "ctx": 4096,
+    "ctx": 4096,                  # used only when ctx_auto is false
+    "ctx_auto": True,             # size the context from THIS PC's free memory at every start
     "gpu_layers": -1,             # -1 = decide automatically from VRAM estimate
     "threads": 0,                 # 0 = llama.cpp default
     "memory_limit_mb": 0,         # 0 = no cap (systemd-run/ulimit style soft cap enforced by estimate check)
@@ -74,6 +75,8 @@ def load_settings():
                     s["remote"].update(v)
                 else:
                     s[k] = v
+            if "ctx" in user and "ctx_auto" not in user:
+                s["ctx_auto"] = False       # an owner's explicit older choice is preserved, not overridden
         except (OSError, ValueError):
             pass
     # Reuse old Arch data without moving it. Translate only known legacy paths.
@@ -167,6 +170,16 @@ def gpus():
                 continue
             dev = os.path.join(base, name, "device")
             vendor = _read(os.path.join(dev, "vendor"))
+            if vendor == "0x8086" and (_read(os.path.join(dev, "class")) or "").startswith("0x03"):
+                did = (_read(os.path.join(dev, "device")) or "").replace("0x", "").lower()
+                total = _read(os.path.join(dev, "mem_info_vram_total"))   # exposed by some Intel dGPU drivers only
+                found.append({
+                    "vendor": "intel", "card": name, "pci_id": f"8086:{did}", "name": f"Intel GPU {did}",
+                    "driver": os.path.basename(os.path.realpath(os.path.join(dev, "driver"))) if os.path.exists(os.path.join(dev, "driver")) else None,
+                    "vram_total": int(total) if total and total.isdigit() else None, "vram_used": None,
+                    "shared_memory": None,
+                })
+                continue
             if vendor != "0x1002":
                 continue
             did = (_read(os.path.join(dev, "device")) or "").replace("0x", "").lower()
@@ -473,8 +486,9 @@ def import_model(src, dest_dir, expected_sha256=None, progress=None, overwrite=F
     if not src.lower().endswith(".gguf"):
         raise ValueError("Only .gguf files are supported by the bundled llama.cpp runtime.")
     if _SPLIT_RE.search(src):
-        raise ValueError("Split-model import requires the complete shard directory. Keep all shards together on a mounted drive "
-                         "and add that directory under Models; select part 00001. Importing only one shard would produce a broken model.")
+        if expected_sha256:
+            raise ValueError("A single checksum cannot verify a multi-shard model. Import without it; every shard's SHA-256 is reported.")
+        return import_split_set(src, dest_dir, progress, overwrite)
     hdr = read_gguf_header(src)          # raises GGUFError
     ok, why = check_split_complete(src)
     if not ok:
@@ -515,6 +529,74 @@ def import_model(src, dest_dir, expected_sha256=None, progress=None, overwrite=F
         if os.path.exists(tmp):
             os.unlink(tmp)
     return dest, got
+
+
+def split_members(first):
+    """Absolute shard paths of a complete split set, or raise ValueError. Order is part 1..N."""
+    m = _SPLIT_RE.search(first)
+    if not m:
+        raise ValueError("Not a split-model shard name.")
+    ok, why = check_split_complete(first)
+    if not ok:
+        raise ValueError(why)
+    count = int(m.group(2))
+    base = first[:m.start()]
+    return [f"{base}-{i:05d}-of-{count:05d}.gguf" for i in range(1, count + 1)]
+
+
+def import_split_set(first, dest_dir, progress=None, overwrite=False):
+    """Copy EVERY shard of a split GGUF as one all-or-nothing set.
+
+    Shards are copied to temporary names, hashed while copying, header-checked, and only
+    renamed into place after all of them succeeded. Any failure removes every partial file.
+    Returns (path_of_part_1, 'name=sha256;...').
+    """
+    members = split_members(first)
+    sizes = [os.path.getsize(p) for p in members]
+    for p in members:
+        read_gguf_header(p)
+    os.makedirs(dest_dir, exist_ok=True)
+    dests = [os.path.join(dest_dir, os.path.basename(p)) for p in members]
+    clash = [d for d in dests if os.path.exists(d)]
+    if clash and not overwrite:
+        raise ValueError(f"Destination already has shard(s): {', '.join(os.path.basename(c) for c in clash)}")
+    total = sum(sizes)
+    free = shutil.disk_usage(dest_dir).free
+    if total + (64 << 20) > free:
+        raise ValueError(f"Not enough free space: need {total} bytes for {len(members)} shards, have {free}.")
+    tmps = [d + ".part" for d in dests]
+    digests, done = [], 0
+    try:
+        for src, tmp, size in zip(members, tmps, sizes):
+            h = hashlib.sha256()
+            with open(src, "rb") as fi, open(tmp, "wb") as fo:
+                while True:
+                    b = fi.read(8 << 20)
+                    if not b:
+                        break
+                    fo.write(b)
+                    h.update(b)
+                    done += len(b)
+                    if progress:
+                        progress(done, total)
+                fo.flush()
+                os.fsync(fo.fileno())
+            if os.path.getsize(tmp) != size:
+                raise ValueError(f"Short copy of {os.path.basename(src)}: the source changed or the drive failed.")
+            if os.path.getsize(src) != size:
+                raise ValueError(f"{os.path.basename(src)} changed while copying; nothing was imported.")
+            read_gguf_header(tmp)
+            digests.append(h.hexdigest())
+        for tmp, d in zip(tmps, dests):
+            os.replace(tmp, d)
+    finally:
+        for tmp in tmps:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+    return dests[0], ";".join(f"{os.path.basename(d)}={g}" for d, g in zip(dests, digests))
 
 
 # ----------------------------------------------------------------- memory --

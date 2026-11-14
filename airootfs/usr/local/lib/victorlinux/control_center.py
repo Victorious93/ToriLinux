@@ -25,6 +25,7 @@ import urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
+import hostplan  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
@@ -140,22 +141,26 @@ class App:
         ok, why = tc.check_split_complete(model)
         if not ok:
             return {"error": why}
-        try:
-            est = tc.estimate_memory(model, int(settings["ctx"]))
-        except tc.GGUFError as e:
-            return {"error": f"This file is not a valid GGUF model: {e}"}
         gl = tc.gpus()
         backend, reason = tc.choose_backend(settings["backend"], gl)
         if not backend:
             return {"error": reason}
-        vram_free = None
-        if backend != "cpu":
-            for g in gl:
-                if g.get("vram_total") is not None:
-                    vram_free = g["vram_total"] - (g.get("vram_used") or 0)
-                    break
         ram = tc.ram_info()
-        fit = tc.fit_report(est, ram, vram_free if backend != "cpu" else None)
+        vk = tc.vulkan_devices() if backend == "vulkan" else None
+        dev = hostplan.select_device(backend, gl, ram, vk)
+        try:
+            est = tc.estimate_memory(model, int(settings["ctx"]))
+            ctx, ctx_note = int(settings["ctx"]), "Context set manually by the owner."
+            if settings.get("ctx_auto", True):
+                pool = dev["budget"] if dev["kind"] == "dedicated" and est["weights"] + est["overhead"] <= dev["budget"] \
+                    else dev["budget"] + (int(ram.get("available", 0) * hostplan.RAM_FRACTION) if dev["kind"] == "dedicated" else 0)
+                ctx, ok, ctx_note = hostplan.auto_context(
+                    est["weights"], lambda c: tc.estimate_memory(model, c)["kv_cache"], est["overhead"], pool, est.get("ctx_train"))
+                est = tc.estimate_memory(model, ctx)
+        except tc.GGUFError as e:
+            return {"error": f"This file is not a valid GGUF model: {e}"}
+        vram_free = dev["free"] if dev["kind"] == "dedicated" else None
+        fit = tc.fit_report(est, ram, vram_free)
         limit = int(settings.get("memory_limit_mb") or 0) * 1048576
         if limit and est["total"] > limit and not (vram_free and est["total"] <= vram_free):
             return {"error": f"Estimated memory {tc.human(est['total'])} exceeds your limit of {tc.human(limit)}. "
@@ -166,13 +171,13 @@ class App:
         if backend == "cpu":
             ngl = 0
         elif ngl < 0:
-            if vram_free and est["total"] > vram_free * 0.92 and est.get("n_layer"):
-                avail = max(0, vram_free * 0.88 - (est["kv_cache"] or 0) - est["overhead"])
-                ngl = max(0, int(est["n_layer"] * avail / max(1, est["weights"])))
-            else:
-                ngl = 999
+            ngl = hostplan.plan_layers(est, dev, ctx)
+        threads = int(settings.get("threads") or 0) or hostplan.default_threads()
         return {"backend": backend, "reason": reason, "model": model, "estimate": est, "fit": fit,
-                "ngl": ngl, "binary": tc.backends()[backend]}
+                "ngl": ngl, "ctx": ctx, "ctx_note": ctx_note, "threads": threads,
+                "device": {k: dev[k] for k in ("kind", "budget", "free", "ambiguous", "notes")} |
+                          {"name": (dev["device"] or {}).get("name"), "index": dev.get("index"), "others": len(dev["others"])},
+                "binary": tc.backends()[backend]}
 
     def start_llm(self, settings, force=False):
         with self.lock:
@@ -186,27 +191,32 @@ class App:
             key = self.ensure_upstream_key()
             help_text = self.llama_flags(plan["binary"])
             cmd = [plan["binary"], "-m", plan["model"], "--host", "127.0.0.1", "--port", str(UPSTREAM_PORT),
-                   "-c", str(int(settings["ctx"])), "-ngl", str(plan["ngl"]), "--api-key", key, "--alias", "victor-local"]
+                   "-c", str(plan["ctx"]), "-ngl", str(plan["ngl"]), "--api-key", key, "--alias", "victor-local"]
             # security-relevant flags: only passed when this llama-server build knows them
             if "--no-ui-mcp-proxy" in help_text:
                 cmd.append("--no-ui-mcp-proxy")
             if "--jinja" in help_text:
                 cmd.append("--jinja")
             # NOTE: '--tools' (built-in shell/file tools) is deliberately never passed.
-            if int(settings.get("threads") or 0) > 0:
-                cmd += ["-t", str(int(settings["threads"]))]
+            cmd += ["-t", str(plan["threads"])]
             idle = int(settings.get("idle_unload_s") or 0)
             if idle > 0 and "--sleep-idle-seconds" in help_text:
                 cmd += ["--sleep-idle-seconds", str(idle)]
             # belt and braces: shared libs and dynamic ggml backends live next to the binary
             env = {"LD_LIBRARY_PATH": os.path.dirname(plan["binary"])}
+            idx = plan["device"].get("index")
+            if plan["backend"] == "cuda" and idx is not None and plan["device"]["others"]:
+                env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"          # matches nvidia-smi numbering
+                env["CUDA_VISIBLE_DEVICES"] = str(idx)           # memory is attributed to exactly this card
             if plan["backend"] == "vulkan":
                 env["GGML_VK_VISIBLE_DEVICES"] = os.environ.get("GGML_VK_VISIBLE_DEVICES", "")
                 if not env["GGML_VK_VISIBLE_DEVICES"]:
                     env.pop("GGML_VK_VISIBLE_DEVICES")
             self.spawn(self.llm, cmd, env=env)
             self.llm_info = {"backend": plan["backend"], "reason": plan["reason"], "ngl": plan["ngl"],
-                             "model": plan["model"], "estimate": plan["estimate"], "fit": plan["fit"]}
+                             "model": plan["model"], "estimate": plan["estimate"], "fit": plan["fit"],
+                             "ctx": plan["ctx"], "ctx_note": plan["ctx_note"], "threads": plan["threads"], "device": plan["device"]}
+            hostplan.write_host_profile(hostplan.host_profile(settings))
         time.sleep(1.5)
         if not self.llm.running():
             return {"ok": False, "error": "llama-server exited immediately. See the log below.", "log": self.tail("llama", 40)}
@@ -214,7 +224,43 @@ class App:
         if not gw.get("ok"):
             return {"ok": False, "error": "Model started but the API gateway did not: " + gw.get("error", "unknown"),
                     "log": self.tail("gateway", 20)}
+        threading.Thread(target=self.verify_generation, args=(dict(self.llm_info), key), daemon=True).start()
         return {"ok": True, "plan": self.llm_info}
+
+    def verify_generation(self, info, key):
+        """Mark a model 'verified' only after llama-server really produced a token on this PC."""
+        import urllib.request
+        base = f"http://127.0.0.1:{UPSTREAM_PORT}"
+        self.llm_verify = {"state": "waiting"}
+        for _ in range(120):
+            if not self.llm.running():
+                self.llm_verify = {"state": "failed", "error": "llama-server exited before it finished loading."}
+                return
+            try:
+                with urllib.request.urlopen(base + "/health", timeout=2) as r:
+                    if r.status == 200:
+                        break
+            except OSError:
+                pass
+            time.sleep(1)
+        else:
+            self.llm_verify = {"state": "failed", "error": "Model did not become ready within 2 minutes."}
+            return
+        try:
+            req = urllib.request.Request(base + "/v1/chat/completions", method="POST",
+                                         data=json.dumps({"model": "victor-local", "max_tokens": 1,
+                                                          "messages": [{"role": "user", "content": "Hi"}]}).encode(),
+                                         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                body = json.loads(r.read().decode())
+            if not body.get("choices"):
+                raise ValueError("no choices in response")
+        except (OSError, ValueError) as e:
+            self.llm_verify = {"state": "failed", "error": f"Loaded but did not generate: {e}"}
+            return
+        name = (info.get("device") or {}).get("name")
+        hostplan.record_verified(info["model"], info["backend"], name, info["ngl"], info["ctx"])
+        self.llm_verify = {"state": "verified", "backend": info["backend"], "device": name}
 
     def stop_llm(self):
         with self.lock:
@@ -275,7 +321,7 @@ class App:
             "backends_present": tc.backends(), "backend": {"selected": be, "reason": reason},
             "llm": {"running": up, "info": self.llm_info if up else {}, "accel": self.accel_report() if up else None,
                     "uptime": int(time.time() - self.llm.started) if up else None},
-            "gateway": {"running": self.gw.running()},
+            "gateway": {"running": self.gw.running()}, "verify": getattr(self, "llm_verify", None),
             "services": svcs, "settings": s, "has_api_key": bool(sec.get("api_keys")),
             "ssh": self.priv_json(["ssh-status"]),
             "offline_notice": "All inference is local. No telemetry, cloud inference or automatic downloads are configured.",
@@ -368,6 +414,14 @@ class App:
             lines.append("  " + ", ".join(f"{k}={v}" for k, v in d.items()))
         be, why = tc.choose_backend(tc.load_settings()["backend"], gl, vk)
         lines.append(f"Backends present: {tc.backends()}")
+        dev = hostplan.select_device(be, gl, r, vk if be == "vulkan" else None)
+        lines.append(f"Memory pool: {dev['kind']} budget={tc.human(dev['budget'])} free={tc.human(dev['free'])} "
+                     f"device={(dev['device'] or {}).get('name')} other_devices={len(dev['others'])}")
+        for n in dev["notes"]:
+            lines.append("  note: " + n)
+        lines.append(f"Default threads: {hostplan.default_threads()} (physical {hostplan.physical_threads()})")
+        if getattr(self, "llm_verify", None):
+            lines.append("Generation check: " + json.dumps(self.llm_verify))
         lines.append(f"Selected backend: {be} - {why}")
         lines.append(f"Storage: {json.dumps(tc.persist_state())}")
         if self.llm.running():
@@ -441,8 +495,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, {"models": tc.list_models(s["extra_model_dirs"]), "dirs": [tc.data_path("models")] + s["extra_model_dirs"]})
             if u.path == "/api/recommendations":
                 gl = tc.gpus()
+                s = tc.load_settings()
                 backend, _reason = tc.choose_backend("auto", gl)
-                return self._send(200, model_advisor.report(tc.ram_info(), gl, backend, tc.load_settings()["ctx"]))
+                ram = tc.ram_info()
+                dev = hostplan.select_device(backend, gl, ram, tc.vulkan_devices() if backend == "vulkan" else None)
+                rep = model_advisor.report(ram, gl, backend, s["ctx"])
+                rep["host"] = {"backend": backend, "memory_kind": dev["kind"], "budget": dev["budget"], "notes": dev["notes"],
+                               "device": (dev["device"] or {}).get("name"), "other_devices": len(dev["others"]),
+                               "threads_default": hostplan.default_threads()}
+                rep["local"] = hostplan.rank_local(tc.list_models(s["extra_model_dirs"]), ram, dev, backend)
+                rep["local_note"] = ("Fit is an estimate. 'verified-here' means this exact file loaded and produced a token on "
+                                     "this backend/device; 'untested' means it has not been proven on this PC.")
+                return self._send(200, rep)
             if u.path == "/api/estimate":
                 path = q["path"][0]
                 ctx = int(q.get("ctx", ["4096"])[0])
@@ -491,6 +555,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 for k in ("backend", "model", "ctx", "gpu_layers", "threads", "memory_limit_mb", "idle_unload_s"):
                     if k in b:
                         s[k] = b[k]
+                if "ctx_auto" in b:
+                    if not isinstance(b["ctx_auto"], bool):
+                        return self._send(400, {"error": "ctx_auto must be true or false."})
+                    s["ctx_auto"] = b["ctx_auto"]
                 if s["backend"] not in ("auto", "vulkan", "hip", "cuda", "cpu"):
                     return self._send(400, {"error": "unknown backend"})
                 s["ctx"] = max(256, min(int(s["ctx"]), 1 << 20))

@@ -67,12 +67,40 @@ def test_split_estimate_counts_all_shards_and_lists_first_only(tmp_path, monkeyp
     assert [m["path"] for m in tc.list_models()] == [str(a)]
 
 
-def test_split_import_never_silently_copies_only_one_shard(tmp_path):
+def test_split_import_copies_whole_set_atomically(tmp_path):
+    a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
+    make_gguf(a, pad=10); make_gguf(b, pad=20)
+    seen = []
+    first, digests = tc.import_model(str(a), str(tmp_path / "dest"), progress=lambda d, t: seen.append((d, t)))
+    assert first == str(tmp_path / "dest" / a.name)
+    assert (tmp_path / "dest" / b.name).read_bytes() == b.read_bytes()
+    assert seen[-1][0] == seen[-1][1] == a.stat().st_size + b.stat().st_size
+    assert digests.count("=") == 2 and not list((tmp_path / "dest").glob("*.part"))
+
+
+def test_split_import_rejects_incomplete_set_and_cleans_up(tmp_path):
+    a = tmp_path / "m-00001-of-00003.gguf"; make_gguf(a)
+    with pytest.raises(ValueError, match="missing"):
+        tc.import_model(str(a), str(tmp_path / "dest"))
+    assert not (tmp_path / "dest").exists() or not list((tmp_path / "dest").iterdir())
+
+
+def test_split_import_failure_leaves_nothing_behind(tmp_path):
+    a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
+    make_gguf(a); b.write_bytes(b"corrupt shard, not GGUF")
+    with pytest.raises(tc.GGUFError):
+        tc.import_model(str(a), str(tmp_path / "dest"))
+    assert not list((tmp_path / "dest").glob("*")) if (tmp_path / "dest").exists() else True
+
+
+def test_split_import_refuses_overwrite_and_single_checksum(tmp_path):
     a, b = tmp_path / "m-00001-of-00002.gguf", tmp_path / "m-00002-of-00002.gguf"
     make_gguf(a); make_gguf(b)
-    with pytest.raises(ValueError, match="complete shard directory"):
+    with pytest.raises(ValueError, match="single checksum"):
+        tc.import_model(str(a), str(tmp_path / "dest"), "0" * 64)
+    tc.import_model(str(a), str(tmp_path / "dest"))
+    with pytest.raises(ValueError, match="already has"):
         tc.import_model(str(a), str(tmp_path / "dest"))
-    assert not (tmp_path / "dest" / a.name).exists()
 
 
 def test_fit_report():
