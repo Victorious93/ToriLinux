@@ -25,7 +25,7 @@ m = {
  "image": "VictorLinux (Debian edition)", "maintainer": "Victorious / Victorious Framework",
  "upstream": "Derived from ToriLinux by sasha0552 (Arch-based); Debian edition is a separate live-build implementation",
  "iso": {"file": os.path.basename(iso), "bytes": os.path.getsize(iso), "sha256": h.hexdigest()},
- "profile": profile, "built_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+ "profile": profile, "variant": (open(os.path.join(ch, "usr/share/victorlinux/variant")).read().strip() if os.path.exists(os.path.join(ch, "usr/share/victorlinux/variant")) else "gui"), "built_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
  "pins": kv(rd(f"{here}/versions.env").replace("\t", " ").split("#")[0] if False else "\n".join(l.split("#")[0].strip() for l in rd(f"{here}/versions.env").splitlines())),
  "image_facts": kv(rd(f"{ch}/usr/share/victorlinux/image-facts")),
  "llama_cpp_build": kv(rd(f"{ch}/usr/share/victorlinux/llamacpp.build-info")),

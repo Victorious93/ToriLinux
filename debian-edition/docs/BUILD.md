@@ -19,6 +19,9 @@ reproducibility point `DEBIAN_MIRROR` at a snapshot mirror you control, e.g. `ht
 Python environments: the image uses distro Python only; no pip-installed ML stacks are in the default image, so there is no cross-project dependency conflict to isolate.
 Optional packs (image generation) must each use their own venv — see PACKS.md.
 
+## Variants
+`--variant gui` (default) or `--variant headless` (no desktop; see HEADLESS.md).
+
 ## Overrides
 `DEBIAN_MIRROR`, `DEBIAN_SECURITY_MIRROR`; behind a TLS-intercepting proxy: `EXTRA_CA_BUNDLE=ca.pem BUILD_HTTPS_PROXY=...` (used only inside the build chroot and
 deleted by hook `9999`, never shipped).

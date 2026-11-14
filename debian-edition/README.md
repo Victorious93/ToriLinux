@@ -44,4 +44,4 @@ Boot the drive, choose the ISO in Ventoy, log in is automatic; the first-run wiz
 Details: [docs/USB.md](docs/USB.md), [docs/PERSISTENCE.md](docs/PERSISTENCE.md).
 
 ## Documents
-[BUILD](docs/BUILD.md) · [USB](docs/USB.md) · [PERSISTENCE](docs/PERSISTENCE.md) · [GPU](docs/GPU.md) · [ENDPOINT / DroidCommand-AI](docs/ENDPOINT.md) · [KALI](docs/KALI.md) · [SECURITY](docs/SECURITY.md) · [PACKS & parity with Arch](docs/PACKS.md) · [ROADMAP](docs/ROADMAP.md) · [TEST REPORT](docs/TEST-REPORT.md)
+[BUILD](docs/BUILD.md) · [USB](docs/USB.md) · [PERSISTENCE](docs/PERSISTENCE.md) · [GPU](docs/GPU.md) · [ENDPOINT / DroidCommand-AI](docs/ENDPOINT.md) · [KALI](docs/KALI.md) · [SECURITY](docs/SECURITY.md) · [PACKS & parity with Arch](docs/PACKS.md) · [ROADMAP](docs/ROADMAP.md) · [HEADLESS](docs/HEADLESS.md) · [TEST REPORT](docs/TEST-REPORT.md)

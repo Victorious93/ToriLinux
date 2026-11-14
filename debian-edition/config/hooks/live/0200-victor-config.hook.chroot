@@ -17,7 +17,9 @@ cat > /etc/hosts <<'H'
 ::1 localhost ip6-localhost ip6-loopback
 H
 
-# --- lightdm autologin (live-config's lightdm step also edits lightdm.conf; ours is explicit and authoritative)
+# --- lightdm autologin (gui variant only; live-config's lightdm step also edits lightdm.conf; ours is explicit and authoritative)
+VARIANT="$(cat /usr/share/victorlinux/variant 2>/dev/null || echo gui)"
+if [ "$VARIANT" = gui ]; then
 install -d /etc/lightdm/lightdm.conf.d
 cat > /etc/lightdm/lightdm.conf.d/50-victorlinux.conf <<'C'
 [Seat:*]
@@ -25,6 +27,7 @@ autologin-user=victor
 autologin-user-timeout=0
 user-session=xfce
 C
+fi
 
 # --- services: nothing AI-related starts at boot; SSH off until configured by the owner
 systemctl disable ssh.service ssh.socket 2>/dev/null || true
@@ -74,7 +77,7 @@ rm -f /var/lib/dbus/machine-id /etc/ssh/ssh_host_*
 {
   echo "kernel_package=$(dpkg-query -W -f='${Package} ${Version}' linux-image-amd64)"
   ls /lib/modules | sed 's/^/kernel_modules_dir=/'
-  for p in firmware-amd-graphics firmware-linux-free firmware-misc-nonfree mesa-vulkan-drivers libvulkan1 podman live-boot live-config xfce4 nmap wireshark tcpdump adb fastboot git; do
+  for p in firmware-amd-graphics firmware-linux-free firmware-misc-nonfree mesa-vulkan-drivers libvulkan1 podman live-boot live-config xfce4 nmap wireshark tshark tcpdump adb fastboot git; do
     echo "pkg_${p}=$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null || echo absent)"
   done
 } > /usr/share/victorlinux/image-facts

@@ -9,6 +9,7 @@ on:
     inputs:
       runner: { description: "runs-on label", default: "ubuntu-24.04", type: string }
       profile: { description: "amd (default) or nvidia", default: "amd", type: choice, options: [amd, nvidia] }
+      variant: { description: "gui (default) or headless", default: "gui", type: choice, options: [gui, headless] }
   pull_request:
     paths: ["debian-edition/**", ".github/workflows/debian-iso.yml"]
   push:
@@ -60,12 +61,12 @@ jobs:
           sudo apt-get install -y ./*.deb
           lb --version
       - name: Build ISO
-        run: sudo ./debian-edition/build.sh --profile "${{ inputs.profile || 'amd' }}" --workdir /mnt/victor-build --out "$PWD/out/debian"
+        run: sudo ./debian-edition/build.sh --profile "${{ inputs.profile || 'amd' }}" --variant "${{ inputs.variant || 'gui' }}" --workdir /mnt/victor-build --out "$PWD/out/debian"
       - name: Verify ISO (static)
         run: sudo ./debian-edition/scripts/verify-iso.sh "$(ls out/debian/*.iso | head -1)"
       - uses: actions/upload-artifact@v4
         with:
-          name: victorlinux-debian-${{ inputs.profile || 'amd' }}
+          name: victorlinux-debian-${{ inputs.profile || 'amd' }}-${{ inputs.variant || 'gui' }}
           path: |
             out/debian/*.iso
             out/debian/*.sha256

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """First-run owner setup (works offline). Sets the owner's OWN password and optional SSH public key."""
-import subprocess, sys, tkinter as tk
-from tkinter import messagebox, ttk
+import getpass, subprocess, sys
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
 def status():
@@ -9,6 +8,30 @@ def status():
 
 if status() != "locked":
     sys.exit(0)
+
+
+def text_mode():
+    """Console variant (headless image, or no display): same rules and same privileged helper as the GUI."""
+    print("Welcome to VictorLinux. No shared default password exists. Choose your own owner password (min 8 chars).\n"
+          "It is stored as a hash on your data partition (if one is selected); without one you will be asked again each boot.")
+    for _ in range(3):
+        a, b = getpass.getpass("Password: "), getpass.getpass("Repeat:   ")
+        if a != b or len(a) < 8:
+            print("Passwords must match and be at least 8 characters.")
+            continue
+        r = subprocess.run([*PRIV, "set-password"], input=a + "\n", capture_output=True, text=True)
+        if r.returncode:
+            print("Error:", r.stderr.strip()); return 1
+        print("Owner password set. SSH stays OFF until you enable it (docs/HEADLESS.md).")
+        return 0
+    print("Not set. Run victor-firstrun again.")
+    return 1
+
+
+if "--text" in sys.argv:
+    sys.exit(text_mode())
+import tkinter as tk
+from tkinter import messagebox, ttk
 root = tk.Tk(); root.title("VictorLinux first-run setup")
 ttk.Label(root, wraplength=420, padding=8, text="Welcome to VictorLinux. No shared default password exists. Choose your own owner password "
           "(min 8 chars). It is stored as a hash on your data partition (if one is selected) so it survives reboot; without a data "

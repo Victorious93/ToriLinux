@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # VictorLinux (Debian edition) local build entry point.
-# Usage: sudo ./build.sh [--profile amd|nvidia] [--workdir DIR] [--out DIR] [--clean]
+# Usage: sudo ./build.sh [--profile amd|nvidia] [--variant gui|headless] [--workdir DIR] [--out DIR] [--clean]
 # Requires root, Debian live-build (>= 20250505) and ~20 GiB free disk, 8 GiB RAM recommended, internet (BUILD time only).
 set -Eeuo pipefail
 trap 'echo "build.sh: FAILED at line $LINENO (exit $?)" >&2' ERR
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROFILE=amd; WORKDIR=/var/tmp/victorlinux-build; OUT="$HERE/../out/debian"; CLEAN=0
+PROFILE=amd; VARIANT=gui; WORKDIR=/var/tmp/victorlinux-build; OUT="$HERE/../out/debian"; CLEAN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="$2"; shift 2;;
+    --variant) VARIANT="$2"; shift 2;;
     --workdir) WORKDIR="$2"; shift 2;;
     --out) OUT="$2"; shift 2;;
     --clean) CLEAN=1; shift;;
@@ -18,6 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$PROFILE" in amd|nvidia) ;; *) echo "profile must be amd or nvidia" >&2; exit 2;; esac
+case "$VARIANT" in gui|headless) ;; *) echo "variant must be gui or headless" >&2; exit 2;; esac
 [ "$(id -u)" -eq 0 ] || { echo "must run as root (live-build uses chroot/mount)" >&2; exit 1; }
 
 # shellcheck source=versions.env
@@ -66,10 +68,20 @@ if [ "$PROFILE" = nvidia ]; then
   cp config/package-lists/90-nvidia.list.chroot.nvidia config/package-lists/90-nvidia.list.chroot
 fi
 rm -f config/package-lists/*.nvidia
+if [ "$VARIANT" = headless ]; then
+  # no X/Xfce/greeter/Tk/browser: console + SSH + victor-ctl only. wireshark (Qt GUI) -> tshark (same dumpcap/group model).
+  rm -f config/package-lists/20-desktop.list.chroot
+  sed -i 's/^wireshark$/tshark/' config/package-lists/40-dev-diag.list.chroot
+  grep -qx tshark config/package-lists/40-dev-diag.list.chroot || { echo "headless: tshark substitution failed" >&2; exit 1; }
+  rm -rf config/includes.chroot_after_packages/etc/lightdm config/includes.chroot_after_packages/etc/skel/.config
+  rm -f config/includes.chroot_after_packages/usr/local/bin/{victor-control,victor-chat,victor-theme}
+  cp -a "$HERE/config/variants/headless/." config/includes.chroot_after_packages/
+fi
 # pins visible inside the chroot hooks
 install -d config/includes.chroot_after_packages/usr/share/victorlinux
 cp "$HERE/versions.env" config/includes.chroot_after_packages/usr/share/victorlinux/versions.env
 echo "$PROFILE" > config/includes.chroot_after_packages/usr/share/victorlinux/profile
+echo "$VARIANT" > config/includes.chroot_after_packages/usr/share/victorlinux/variant
 # Optional: build hosts behind a TLS-intercepting proxy. EXTRA_CA_BUNDLE=/path/ca.pem [BUILD_HTTPS_PROXY=url]
 # The material is used only inside the chroot during the build and removed by hook 9999 (never shipped).
 if [ -n "${EXTRA_CA_BUNDLE:-}" ]; then
@@ -89,7 +101,8 @@ set +e; lb build 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}; set -e
 
 iso="$(ls -1 "$WORKDIR"/*.iso | head -1)"
 [ -f "$iso" ] || { echo "no ISO produced" >&2; exit 1; }
-final="$OUT/${IMAGE_NAME}-debian-${DEBIAN_SUITE}-${PROFILE}-amd64-$(date -u +%Y%m%d).iso"
+suffix=""; [ "$VARIANT" = headless ] && suffix="-headless"
+final="$OUT/${IMAGE_NAME}-debian-${DEBIAN_SUITE}-${PROFILE}${suffix}-amd64-$(date -u +%Y%m%d).iso"
 cp -f "$iso" "$final"
 ( cd "$OUT" && sha256sum "$(basename "$final")" > "$(basename "$final").sha256" )
 "$HERE/scripts/gen-manifest.sh" "$WORKDIR" "$final" "$PROFILE" "$log" > "$final.manifest.json"

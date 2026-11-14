@@ -13,6 +13,7 @@ Requires: qemu-system-x86_64, xorriso, OVMF (for UEFI), root (loop-mount disposa
 import json, os, re, shutil, socket, subprocess, sys, time, glob, uuid
 
 RESULTS = []
+HEADLESS = os.environ.get("VICTOR_VARIANT") == "headless"   # set when the ISO under test is the headless variant
 
 
 def rec(name, ok, detail=""):
@@ -148,13 +149,18 @@ def full(iso, model, out):
         rec("no AI service started at boot", "none" in o and "no-llama-running" in o, o)
         rc, o = vm.sh("cat /run/victor/storage.json; ls /run/victor/")
         rec("storage auto-mounted VICTORDATA by UUID (single partition)", '"state": "mounted-rw"' in o, o[:300])
-        rc, o = vm.sh("for i in $(seq 90); do pgrep -f victor-control >/dev/null && break; sleep 2; done; pgrep -a Xorg | head -1; pgrep -a xfce4-session | head -1; pgrep -af victor-control | head -1; pgrep -af victor-firstrun | head -1", 240)
-        rec("desktop (Xorg+Xfce) up, Control Center autostarted", "Xorg" in o and "xfce4-session" in o and "victor-control" in o, o)
-        vm.screenshot(f"{out}/desktop-boot1.png")
-        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme status; grep -o 'Adwaita-dark' /home/victor/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml | head -1; grep -o 'ColorBackground=.*' /home/victor/.config/xfce4/terminal/terminalrc; grep theme-name /etc/lightdm/lightdm-gtk-greeter.conf; test -d /usr/share/themes/Adwaita-dark && echo gtk-theme-installed")
-        rec("DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed", o.startswith("dark") and "gtk-theme-installed" in o and "1b1e26" in o and "Adwaita-dark" in o, o)
-        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme light; cat /run/victor/data/settings/ui.json")
-        rec("light theme selectable; choice stored on the data partition", "light" in o and '"theme": "light"' in o, o)
+        if HEADLESS:
+            rc, o = vm.sh("for i in $(seq 60); do pgrep -u victor -a bash >/dev/null && break; sleep 2; done; pgrep -a Xorg || echo no-xorg; pgrep -af 'lightdm|xfce4-session' || echo no-desktop; pgrep -u victor -a agetty >/dev/null; ps -u victor -o pid,tty,comm | head -5; test ! -e /usr/local/bin/victor-control && echo no-tk-control-center; ls /usr/share/xsessions 2>/dev/null | head -1 || true; (dpkg -s xorg >/dev/null 2>&1 && echo xorg-installed) || echo xorg-not-installed; cat /usr/share/victorlinux/variant")
+            rec("HEADLESS: no X/desktop/greeter installed or running; owner autologin on tty1; variant=headless", "no-xorg" in o and "no-desktop" in o and "xorg-not-installed" in o and "no-tk-control-center" in o and o.strip().endswith("headless") and "tty1" in o, o)
+            rc, o = vm.sh("which victor-ctl tshark dumpcap; python3 -c 'import tkinter' 2>&1 | tail -1"); rec("HEADLESS: victor-ctl + tshark present, no Tk", "victor-ctl" in o and "tshark" in o and "No module named" in o, o)
+        else:
+            rc, o = vm.sh("for i in $(seq 90); do pgrep -f victor-control >/dev/null && break; sleep 2; done; pgrep -a Xorg | head -1; pgrep -a xfce4-session | head -1; pgrep -af victor-control | head -1; pgrep -af victor-firstrun | head -1", 240)
+            rec("desktop (Xorg+Xfce) up, Control Center autostarted", "Xorg" in o and "xfce4-session" in o and "victor-control" in o, o)
+            vm.screenshot(f"{out}/desktop-boot1.png")
+            rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme status; grep -o 'Adwaita-dark' /home/victor/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml | head -1; grep -o 'ColorBackground=.*' /home/victor/.config/xfce4/terminal/terminalrc; grep theme-name /etc/lightdm/lightdm-gtk-greeter.conf; test -d /usr/share/themes/Adwaita-dark && echo gtk-theme-installed")
+            rec("DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed", o.startswith("dark") and "gtk-theme-installed" in o and "1b1e26" in o and "Adwaita-dark" in o, o)
+            rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme light; cat /run/victor/data/settings/ui.json")
+            rec("light theme selectable; choice stored on the data partition", "light" in o and '"theme": "light"' in o, o)
         # ---- first run: owner password (offline)
         rc, o = vm.sh("runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv owner-status"); rec("first-run needed (owner-status=locked)", o.strip().endswith("locked"), o)
         rc, o = vm.sh("printf 'correct horse 42\\n' | runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv set-password"); rec("first-run sets the OWNER's password", rc == 0, o)
@@ -214,8 +220,8 @@ def full(iso, model, out):
         rc, o = ctl(vm, "llama config"); rec("PERSIST: inference config survived reboot", '"model": "test-model.gguf"' in o and '"ctx": 2048' in o, o[:200])
         rc, o = ctl(vm, "model list"); rec("PERSIST: model survived reboot", "test-model.gguf" in o, o)
         rc, o = vm.sh("ls /run/victor/data/secrets/ /run/victor/data/logs | head; test -f /run/victor/data/settings/capabilities.json && echo caps-saved"); rec("PERSIST: API key + TLS cert + bounded log snapshot + capability record present", "api.key" in o and "tls" in o and "caps-saved" in o, o)
-        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme apply; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("PERSIST: theme choice (light) restored from the data partition after reboot", o.strip().endswith("light"), o)
-        rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme dark >/dev/null; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("switch back to dark", o.strip().endswith("dark"), o)
+        if not HEADLESS: rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme apply; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("PERSIST: theme choice (light) restored from the data partition after reboot", o.strip().endswith("light"), o)
+        if not HEADLESS: rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme dark >/dev/null; runuser -u victor -- /usr/local/bin/victor-theme status"); rec("switch back to dark", o.strip().endswith("dark"), o)
         rc, o = vm.sh("runuser -u victor -- sudo -n /usr/local/lib/victorlinux/victor-priv owner-status"); rec("first-run NOT repeated after reboot", o.strip().endswith("set"), o)
         rc, o = ctl(vm, "llama start", 120); rec("service starts again from persisted settings, offline", rc == 0, o[-200:])
         time.sleep(15); rc, o = ctl(vm, "api selftest", 200); rec("inference works again offline after reboot", '"chat_completions": "verified"' in o, o[-300:])
