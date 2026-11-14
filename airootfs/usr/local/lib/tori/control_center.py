@@ -388,14 +388,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
         pass
 
-    def _send(self, code, body, ctype="application/json"):
+    def _send(self, code, body, ctype="application/json", nonce=None):
         b = body if isinstance(body, bytes) else (json.dumps(body) if not isinstance(body, str) else body).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+        script_src = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
+        self.send_header("Content-Security-Policy", f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(b)
 
@@ -418,8 +419,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(403, {"error": "bad host"})
         u = urllib.parse.urlparse(self.path)
         if u.path == "/":
+            # The single page has one inline <script>; allow only that one via a per-response nonce.
+            nonce = pysecrets.token_urlsafe(16)
             with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
-                return self._send(200, f.read(), "text/html; charset=utf-8")
+                page = f.read().replace(b"<script>", b'<script nonce="' + nonce.encode() + b'">')
+            return self._send(200, page, "text/html; charset=utf-8", nonce=nonce)
         if not u.path.startswith("/api/"):
             return self._send(404, {"error": "not found"})
         if not self._auth():
