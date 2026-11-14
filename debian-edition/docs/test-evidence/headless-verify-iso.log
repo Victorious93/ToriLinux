@@ -1,0 +1,14 @@
+PASS sha256 matches VictorLinux-debian-trixie-amd-headless-amd64-20261114.iso.sha256
+PASS El Torito BIOS boot image present
+PASS El Torito UEFI boot image present
+PASS live/filesystem.squashfs present
+PASS boot menus (isolinux + GRUB) say VictorLinux, no generic Debian/live-build labels
+PASS owner account is locked in the image (no shared password)
+PASS no live NOPASSWD:ALL sudoers
+PASS no unrestricted passwordless sudo
+PASS no baked SSH host keys
+PASS machine-id empty (unique per boot)
+PASS ssh not enabled at boot
+PASS no AI service enabled at boot
+PASS llama-server present
+PASS no Kali repositories on host

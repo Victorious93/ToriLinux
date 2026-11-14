@@ -71,3 +71,21 @@ sudo ./debian-edition/tests/integration-chroot.sh <workdir>/chroot stories260K.g
 sudo python3 -I debian-edition/tests/vm_test.py full out/debian/*.iso stories260K.gguf OUTDIR   # needs qemu, OVMF, xorriso
 sudo python3 -I debian-edition/tests/vm_test.py bootloader out/debian/*.iso OUTDIR
 ```
+
+## Headless variant (`build.sh --variant headless`, commit `aca515a`)
+
+Built with `build.sh --variant headless` (first attempt failed only because the sandbox proxy restarted on another port during the llama.cpp clone; the identical retry succeeded).
+
+| | |
+|---|---|
+| ISO | `VictorLinux-debian-trixie-amd-headless-amd64-20261114.iso`, 718,274,560 bytes (GUI image: 1,039,138,816), 436 packages (GUI: 842), manifest `"variant": "headless"` |
+| SHA-256 | `8d5b5d4417ebbcaa650f16f051e4611750d52bbeb7cfde0eee41b524aca7cbc0` |
+| Static verify | **14 / 14** (`headless-verify-iso.log`) |
+| QEMU suite (`VICTOR_VARIANT=headless vm_test.py full`) | **50 / 50** (`headless-vm-full-report.json`): the GUI suite's 53 minus the 4 desktop/theme checks, plus 2 headless checks |
+| Unit tests | 34 / 34 (adds `test_variants.py`) |
+
+Headless-specific evidence: Xorg/Xfce/LightDM neither installed nor running, no Tk, no Control Center, `victor-ctl` + `tshark`/`dumpcap` present, owner shell present on `tty1` (autologin). All shared checks passed
+(locked owner, SSH off, offline inference after reboot, persistence, TLS endpoint + firewall, read-only/missing storage, no telemetry).
+
+**Not verified for headless:** the interactive text first-run (`victor-firstrun --text`) was *not* exercised end to end (the suite sets the password through `victor-priv`, as for the GUI); owner SSH enablement
+on this image; a real console/keyboard; real hardware; GPU acceleration; the integration-chroot suite and the bootloader screenshots were run for the GUI ISO only.
