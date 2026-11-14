@@ -17,6 +17,7 @@ Modified by Victorious / Victorious Framework from upstream ToriLinux (sasha0552
 import configparser
 import glob
 import json
+import os
 import sys
 
 import jinja2
@@ -86,7 +87,7 @@ def main():
   for filepath in sorted(glob.glob("**/*.jinja2", recursive=True)) + [".gitignore.jinja2"]:
     rendered.sort()
     render_template(filepath, platform=platform, type=type_, packs=packs, rendered=rendered,
-                    gh_release=gh_release, **options)
+                    gh_release=gh_release, sccache=(os.environ.get("VICTOR_SCCACHE") == "1"), **options)
     rendered.append(filepath[:-7].replace("\\", "/"))
     print(f"File '{filepath}' rendered successfully")
   print(f"PROFILE platform={platform} type={type_} packs={','.join(packs) or '-'}")

@@ -1,4 +1,4 @@
-import os, struct, sys, tempfile, unittest
+import json, os, struct, sys, tempfile, unittest
 LIB = os.path.join(os.path.dirname(__file__), "..", "config", "includes.chroot_after_packages", "usr", "local", "lib", "victorlinux")
 sys.path.insert(0, LIB)
 from victorlib import hw, storage, models, llama
@@ -141,6 +141,31 @@ class ModelFiles(unittest.TestCase):
         p = self.write(b"\x10\0\0\0\0\0\0\0{\"a\":1}")
         with self.assertRaises(VictorError) as cm: models.inspect_gguf(p)
         self.assertIn("GGUF", str(cm.exception))
+
+
+class CacheRamTests(unittest.TestCase):
+    GiB = 1 << 30
+
+    def test_auto_is_bounded_by_free_ram_not_the_8gib_default(self):
+        c = {"cache_ram_mb": "auto"}
+        self.assertEqual(llama.resolve_cache_ram_mb(c, 4 * self.GiB, 64 * self.GiB), 8192)          # roomy host: capped at the old default
+        self.assertEqual(llama.resolve_cache_ram_mb(c, 4 * self.GiB, 16 * self.GiB), 2560)         # (16-4-2)/4 GiB
+        self.assertEqual(llama.resolve_cache_ram_mb(c, 14 * self.GiB, 16 * self.GiB), 0)           # nothing spare: cache off, never negative
+        self.assertEqual(llama.resolve_cache_ram_mb(c, 4 * self.GiB, None), 1024)                  # unknown RAM: small, not 8 GiB
+
+    def test_explicit_value_wins_and_zero_disables(self):
+        self.assertEqual(llama.resolve_cache_ram_mb({"cache_ram_mb": 512}, 0, 1 << 40), 512)
+        self.assertEqual(llama.resolve_cache_ram_mb({"cache_ram_mb": 0}, 0, 1 << 40), 0)
+
+    def test_flag_passed_only_when_resolved_and_validated(self):
+        c = json.loads(json.dumps(llama.DEFAULTS))
+        self.assertNotIn("--cache-ram", llama.build_command(c, {"accelerated": False, "device": None}, "/m.gguf"))
+        a = llama.build_command(c, {"accelerated": False, "device": None}, "/m.gguf", cache_ram_mb=2560)
+        self.assertEqual(a[a.index("--cache-ram") + 1], "2560")
+        for bad in (-1, 70000, "lots", True):
+            c2 = json.loads(json.dumps(llama.DEFAULTS)); c2["cache_ram_mb"] = bad
+            self.assertTrue(any("cache_ram_mb" in e for e in llama.validate(c2)), bad)
+        self.assertFalse(any("cache_ram_mb" in e for e in llama.validate(c)))
 
 
 if __name__ == "__main__":

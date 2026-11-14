@@ -83,7 +83,23 @@ fi
 
 log="$OUT/build-$(date -u +%Y%m%dT%H%M%SZ).log"
 echo "build log: $log"
-set +e; lb build 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}; set -e
+if [ "${VICTOR_SCCACHE:-0}" = 1 ]; then
+  # Opt-in compiler cache. live-build deletes the chroot after the squashfs is made and cannot bind-mount host paths into it,
+  # so the build is split: lb bootstrap + lb chroot (hooks compile with the staged wrapper), then harvest the cache and SCRUB the
+  # chroot (verified by check-clean, build fails on any leak) BEFORE lb binary builds the squashfs. Default path (below) is unchanged.
+  SS="$HERE/../scripts/sccache-stage.sh"
+  "$SS" stage config/includes.chroot_after_packages
+  set +e
+  { lb bootstrap && lb chroot; } 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+  set -e
+  "$SS" harvest chroot || true
+  rm -rf chroot/usr/local/lib/victor-build chroot/var/cache/victor-sccache chroot/root/.config/sccache
+  "$SS" check-clean chroot || { echo "compiler-cache material would leak into the ISO; aborting" >&2; exit 1; }
+  rm -rf config/includes.chroot_after_packages/usr/local/lib/victor-build config/includes.chroot_after_packages/var/cache/victor-sccache
+  if [ "$rc" -eq 0 ]; then set +e; lb binary 2>&1 | tee -a "$log"; rc=${PIPESTATUS[0]}; set -e; fi
+else
+  set +e; lb build 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}; set -e
+fi
 [ "$rc" -eq 0 ] || { echo "lb build failed (rc=$rc); see $log" >&2; exit "$rc"; }
 
 iso="$(ls -1 "$WORKDIR"/*.iso | head -1)"
