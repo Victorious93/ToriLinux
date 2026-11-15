@@ -73,6 +73,40 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
   assert.equal(await page.locator('#advice').textContent().then(t => t.includes('Optional catalog (not downloaded)')), true);
   console.log('PASS host memory pool and ranked-model advice render');
+  // Storage tab with several drives at once: internal SSD, external 2 TB exFAT drive, FAT32 stick, locked and duplicate volumes
+  await page.unroute('**/api/storage');
+  const part = (o) => Object.assign({uuid: 'U', label: '', fstype: 'ext4', size: 1e12, free: 5e11, kind: 'internal-ssd', removable: false, model: '', serial: '',
+   mounted: true, mountpoint: '/mnt/victor-vol/x', mounted_ro: false, device_ro: false, locked: false, supported: true, persist_ok: true, ro_ok: true, duplicate_uuid: false}, o);
+  const dest = (role, o) => ({role, subpath: '', ref: {uuid: o.uuid}, status: 'active', message: '', path: o.path, writable: true, fstype: o.fstype, free: o.free, persistent: true});
+  await page.route('**/api/storage', route => route.fulfill({json: {
+   state: {mode: 'persistent', message: 'Persistent storage active on /dev/sdc3 (VICTORDATA).'},
+   partitions: [
+    part({path: '/dev/sdc3', uuid: 'VD-1', label: 'VICTORDATA', size: 6e10, kind: 'usb-storage', removable: true, model: 'Cruzer', serial: 'SD1', mountpoint: '/mnt/victordata'}),
+    part({path: '/dev/nvme0n1p2', uuid: 'SSD-1', label: 'Internal SSD', kind: 'internal-nvme', model: 'Samsung SSD 990', persist_ok: true}),
+    part({path: '/dev/sdb1', uuid: 'EXF-1', label: 'Seagate 2TB', fstype: 'exfat', size: 2e12, free: 1.4e12, kind: 'usb-hdd', removable: true, model: 'Expansion', serial: 'NA9', persist_ok: false}),
+    part({path: '/dev/sdd1', uuid: 'FAT-1', label: 'CARD', fstype: 'vfat', size: 6.4e10, kind: 'sd-card', persist_ok: false}),
+    part({path: '/dev/sde1', uuid: 'LUKS-1', fstype: 'crypto_LUKS', locked: true, supported: false, persist_ok: false, ro_ok: false, mounted: false, mountpoint: null}),
+    part({path: '/dev/sdf1', uuid: 'DUP-1', label: 'clone', duplicate_uuid: true, persist_ok: true}),
+   ],
+   summary: {state: {mode: 'persistent'}, destinations: {
+    models: [dest('models', {uuid: 'EXF-1', path: '/mnt/victor-vol/EXF-1/LLM library', fstype: 'exfat', free: 1.4e12})],
+    documents: [dest('documents', {uuid: 'SSD-1', path: '/mnt/victor-vol/SSD-1/Documents', fstype: 'ext4', free: 5e11})],
+    backups: [Object.assign(dest('backups', {uuid: 'GONE', path: null, fstype: 'ntfs', free: null}), {status: 'missing', message: 'The drive with filesystem GONE (Backup HDD) is not connected.'})]}}}}));
+  await page.locator('[data-t="storage"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#stTable tr').length === 7);
+  const dsText = await page.locator('#dsTable').innerText();
+  assert.match(dsText, /models[\s\S]*active · persistent[\s\S]*LLM library/);
+  assert.match(dsText, /backups[\s\S]*missing[\s\S]*not connected/);
+  const drivesText = await page.locator('#stTable').innerText();
+  assert.match(drivesText, /Seagate 2TB[\s\S]*exfat/); assert.match(drivesText, /files < 4 GiB/); assert.match(drivesText, /locked \(encrypted\)/); assert.match(drivesText, /duplicate UUID/);
+  assert.equal(await page.locator('#stTable button[data-use]').count(), 2);          // exFAT/FAT32/locked/duplicate cannot hold app state
+  assert.equal(await page.locator('#dsDrive option').count(), 5);                     // locked volume is not offered as a destination
+  assert.match(await page.locator('#stState').innerText(), /Persistent/);
+  console.log('PASS storage tab: multiple drives, destinations, missing drive, FAT32/locked/duplicate flags');
+  if (process.env.VICTOR_STORAGE_SCREENSHOT) {
+   await page.setViewportSize({width: 1366, height: 1100});
+   await page.screenshot({path: process.env.VICTOR_STORAGE_SCREENSHOT, fullPage: true});
+  }
   for (const width of [1366, 768, 390]) {
    await page.setViewportSize({width, height: 900});
    for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {

@@ -5,9 +5,17 @@
 #   scripts/make-usb.sh plan  --iso out/X.iso --device /dev/sdX
 #   scripts/make-usb.sh write --iso out/X.iso --device /dev/sdX --confirm-serial SERIAL [--layout raw|ventoy] [--ventoy DIR]
 #
+# raw-layout options (see docs/usb.md):
+#   --table auto|mbr|gpt   auto (default) keeps the proven MBR layout when it is fully representable, else GPT
+#   --data-gib N           data partition size (default: all usable space; the rest stays unallocated)
+#   --reserve-mib N        space deliberately left unallocated at the end (default 1024)
+#   --min-data-gib N       refuse drives that would leave less data space (default 2)
+#   --allow-mbr-cap        only for images without GPT support: accept a data partition limited to MBR's 2 TiB
+#
 # Layouts:
-#   raw     (default, verified for UEFI boot in QEMU) the hybrid ISO is written straight to the drive, then an ext4
-#           partition labelled VICTORDATA is added in the free space. One OS per stick; UEFI + BIOS bootable.
+#   raw     (default) the hybrid ISO is written straight to the drive, then an ext4 partition labelled VICTORDATA
+#           is added in the free space (MBR slot 3 up to 2 TiB, GPT beyond that or on request). One OS per stick.
+#           The complete plan (checked 64-bit arithmetic, real sector sizes) is validated BEFORE anything is erased.
 #   ventoy  Ventoy + ISO + VICTORDATA. Multi-ISO, but in testing Ventoy booted this ISO in legacy BIOS mode only;
 #           UEFI mode did NOT boot it in the emulator. Use only if you need Ventoy and have tested your hardware.
 #
@@ -77,26 +85,30 @@ cmd_list() {
 }
 
 # --- raw hybrid layout helpers ---------------------------------------------------------------
-raw_layout() {   # sets raw_data_start_s raw_data_len_s; args: iso device. Reads the ISO's own MBR (ESP is entry 2).
-  local disk_s=$(( $(dev_bytes "$2") / 512 ))
-  local iso_end_s
-  iso_end_s=$(python3 - "$1" <<'PY'
-import struct, sys
-d = open(sys.argv[1], "rb").read(512)
-assert d[510:512] == b"\x55\xaa", "ISO is not a hybrid image (no MBR)"
-end = 0
-for i in range(4):
-    e = d[446+16*i:446+16*(i+1)]
-    st, ln = struct.unpack("<II", e[8:16]); end = max(end, st + ln)
-slot3 = d[446+32:446+48]
-assert slot3 == bytes(16), "MBR slot 3 is not free"
-print(end)
-PY
-)
-  raw_data_start_s=$(( (iso_end_s + 2047) / 2048 * 2048 ))
-  local headroom_s=$(( HEADROOM_MIB * 2048 ))
-  raw_data_len_s=$(( disk_s - raw_data_start_s - headroom_s ))
-  (( raw_data_len_s * 512 >= MIN_DATA_GIB * 1073741824 )) || die "drive too small for the raw layout (need >= $MIN_DATA_GIB GiB data)"
+layout_py="$repo/scripts/victor_layout.py"
+table_opt=auto; data_gib=""; reserve_mib=1024; min_data_gib=2; allow_mbr_cap=0
+
+layout_args() {
+  local a=(--iso "$1" --device "$2" --table "$table_opt" --reserve-mib "$reserve_mib" --min-data-gib "$min_data_gib")
+  [[ -n "$data_gib" ]] && a+=(--data-gib "$data_gib")
+  (( allow_mbr_cap )) && a+=(--allow-mbr-cap)
+  printf '%s\0' "${a[@]}"
+}
+
+raw_layout() {   # args: iso device. Sets plan_* variables from victor_layout.py; dies (touching nothing) if the plan is invalid.
+  need python3
+  local args=() out k v
+  while IFS= read -r -d '' x; do args+=("$x"); done < <(layout_args "$1" "$2")
+  out=$(python3 "$layout_py" plan "${args[@]}" 2>&1) || die "layout rejected before any write: ${out#ERROR=}"
+  plan_note=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      TABLE) plan_table=$v;; LOGICAL) plan_logical=$v;; PHYSICAL) plan_physical=$v;;
+      DATA_BYTES) plan_data_bytes=$v;; DATA_START_LBA) plan_start=$v;; DATA_END_LBA) plan_end=$v;;
+      UNALLOCATED_BYTES) plan_unalloc=$v;; IMAGE_END_BYTES) plan_image_end=$v;;
+      NOTE) plan_note+="  NOTE: $v"$'\n';;
+    esac
+  done <<<"$out"
 }
 
 # --- layout -------------------------------------------------------------------------------
@@ -120,11 +132,14 @@ show_plan() {
     raw_layout "$iso" "$d"
     cat <<PLAN
 Target : $d  model='$(dev_field "$d" MODEL)' serial='$(dev_field "$d" SERIAL)' size=$(dev_bytes "$d") bytes ($(( $(dev_bytes "$d") / 1048576 )) MiB) transport=$(dev_field "$d" TRAN)
+Sectors: logical=$plan_logical physical=$plan_physical  (512e is supported; 4Kn drives are refused for boot media)
 ISO    : $iso ($(stat -c %s "$iso") bytes)
-Layout (raw hybrid ISO, MBR):
-  1  ISO9660 hybrid image + EFI system partition   (the ISO itself, $(( raw_data_start_s * 512 / 1048576 )) MiB)
-  3  ext4 'VICTORDATA'  $(( raw_data_len_s * 512 / 1073741824 )) GiB  persistent: models, chats, settings, images, outputs, documents, logs
-  -  unallocated ~$(( HEADROOM_MIB / 1024 )) GiB left free on purpose
+Layout (raw hybrid ISO, partition table: $plan_table):
+  -  ISO9660 hybrid image + its own EFI partition   ($(( plan_image_end / 1048576 )) MiB, partition table of the image kept as is)
+  +  ext4 'VICTORDATA'  LBA $plan_start..$plan_end  $(python3 -c "print(f'{$plan_data_bytes/2**30:.2f}')") GiB  persistent: models, chats, settings, images, outputs, documents, logs
+  -  unallocated $(python3 -c "print(f'{$plan_unalloc/2**30:.2f}')") GiB left free on purpose$( [[ "$plan_table" == gpt ]] && echo ' (plus the backup GPT at the end of the drive)' )
+${plan_note}Plan check: all offsets are validated with 64-bit arithmetic against the measured device size before anything is written.
+The partition table is intentionally changed, so the drive is NOT byte-identical to the ISO; the ISO payload is verified separately.
 Marketed vs real capacity: the plan uses the measured byte size above, not the label on the box.
 PLAN
     return
@@ -145,7 +160,7 @@ PLAN
 cmd_plan() { check_target "$device"; show_plan "$iso" "$device"; }
 
 write_raw() {
-  need dd; need python3; need wipefs
+  need dd; need python3; need wipefs; need partprobe
   raw_layout "$iso" "$device"
   local sig_before; sig_before="$(dev_field "$device" MODEL)|$(dev_field "$device" SERIAL)|$(dev_bytes "$device")"
   check_target "$device"
@@ -161,18 +176,23 @@ write_raw() {
   got=$(dd if="$device" bs=4M iflag=direct,count_bytes count="$isob" status=none | sha256sum | awk '{print $1}')
   [[ "$got" == "$want" ]] || die "ISO read back from the device does NOT match its checksum"
   echo "ISO read back from $device matches $want"
-  # add partition 3 (MBR slot 3 was verified free) -> ext4 VICTORDATA
-  python3 - "$device" "$raw_data_start_s" "$raw_data_len_s" <<'PY'
-import struct, sys
-dev, start, ln = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-entry = struct.pack("<B3sB3sII", 0, b"\xfe\xff\xff", 0x83, b"\xfe\xff\xff", start, ln)   # CHS unused: LBA addressing
-with open(dev, "r+b") as f:
-    f.seek(446 + 32); assert f.read(16) == bytes(16), "slot 3 not free"
-    f.seek(446 + 32); f.write(entry); f.flush()
-PY
-  sync; partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
-  local p3; if [[ "$device" == *[0-9] ]]; then p3="${device}p3"; else p3="${device}3"; fi
-  [[ -b "$p3" ]] || die "partition 3 did not appear ($p3)"
+  # write ONLY the partition table (MBR slot 3, or a GPT that keeps the image's own entries), re-validating the plan first
+  local args=() x; while IFS= read -r -d '' x; do args+=("$x"); done < <(layout_args "$iso" "$device")
+  python3 "$layout_py" apply "${args[@]}" >/dev/null || die "writing the partition table failed"
+  sync; blockdev --flushbufs "$device"
+  # the image payload (everything after the 32 KiB system area that holds the partition tables) must be unchanged
+  local pay_want pay_got
+  pay_want=$(tail -c +32769 "$iso" | sha256sum | awk '{print $1}')
+  pay_got=$(dd if="$device" bs=4M iflag=direct,skip_bytes,count_bytes skip=32768 count=$((isob - 32768)) status=none | sha256sum | awk '{print $1}')
+  [[ "$pay_want" == "$pay_got" ]] || die "image payload changed while adding the data partition"
+  echo "Image payload (after the system area) re-verified; partition table intentionally changed (table: $plan_table)."
+  partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
+  # find the new partition by its start sector in sysfs (independent of the partition number and of the udev database)
+  local p3 dn; dn=$(basename "$(readlink -f "$device")")
+  p3=$(for sp in /sys/class/block/"$dn"/"$dn"*/start; do
+         [[ -r "$sp" && "$(cat "$sp")" == "$plan_start" ]] && echo "/dev/$(basename "$(dirname "$sp")")"
+       done | head -n1)
+  [[ -n "$p3" && -b "$p3" ]] || die "data partition did not appear after the table write"
   mkfs.ext4 -q -F -L VICTORDATA -m 0 -E lazy_itable_init=1 "$p3"
   local mnt; mnt=$(mktemp -d); mount "$p3" "$mnt"
   mkdir -p "$mnt/victorlinux"/{models,chats,config,images,outputs,documents,logs,server}
@@ -245,6 +265,11 @@ while [[ $# -gt 0 ]]; do
     --device) device=$2; shift 2;;
     --confirm-serial) confirm_serial=$2; shift 2;;
     --ventoy) ventoy_dir=$2; shift 2;;
+    --table) table_opt=$2; shift 2; [[ "$table_opt" == auto || "$table_opt" == mbr || "$table_opt" == gpt ]] || die "--table must be auto, mbr or gpt";;
+    --data-gib) data_gib=$2; shift 2;;
+    --reserve-mib) reserve_mib=$2; shift 2;;
+    --min-data-gib) min_data_gib=$2; shift 2;;
+    --allow-mbr-cap) allow_mbr_cap=1; shift;;
     --layout) layout_kind=$2; shift 2; [[ "$layout_kind" == raw || "$layout_kind" == ventoy ]] || die "--layout must be raw or ventoy";;
     *) die "unknown argument $1";;
   esac

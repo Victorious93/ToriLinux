@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate and import a GGUF model into persistent storage.
-usage: victor-model-import FILE.gguf [--sha256 HEX]"""
+usage: victor-model-import FILE.gguf [--sha256 HEX] [--to-storage]
+  --to-storage  copy into the models destination chosen with `victor-storage use models ...` instead of the application-state drive"""
 import argparse, sys
 import os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "victorlinux"))
 import victorcommon as tc  # noqa: E402
@@ -8,8 +9,11 @@ import victorcommon as tc  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("file")
 ap.add_argument("--sha256")
+ap.add_argument("--to-storage", action="store_true")
 a = ap.parse_args()
-dest = tc.data_path("models")
+dest = tc.dest_dir("models") if a.to_storage else tc.data_path("models")
+if a.to_storage and not dest:
+    sys.exit("No writable models destination is active (run: victor-storage status)")
 if not dest:
     sys.exit("No storage selected (open the Control Center, or run: sudo -n /usr/local/lib/victorlinux/victor-priv persist-auto)")
 try:

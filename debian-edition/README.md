@@ -10,6 +10,8 @@ and an optional isolated Kali container.
 
 > Variants: this release ships the **GUI** variant only. Headless variants for both the Debian and the Arch edition are planned — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
+> Storage: the Arch edition (repository root) can now use the PC's internal SSD and any external drive for models and files in addition to the boot stick, and has a GPT-capable boot-media tool for multi-terabyte drives ([docs/storage.md](../docs/storage.md)). The Debian edition keeps its `VICTORDATA` layout and does **not** have these features yet.
+
 ## What is in the image (runtime dependencies, no network needed)
 
 | Area | Included |

@@ -13,10 +13,14 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import victorstorage as vs  # noqa: E402
+
 RUN = "/run/victor"
 STATE = f"{RUN}/persist.json"
 DATA_MNT = "/mnt/victordata"
-RO_BASE = "/mnt/victor-ro"
+RO_BASE = "/mnt/victor-ro"           # legacy read-only model mounts (kept for existing settings)
+VOL_BASE = vs.VOL_BASE
 TEMP = "/run/victor-temp-data"
 USER = "victor"
 SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs", "server")
@@ -64,35 +68,26 @@ def boot_devices():
 
 
 def lsblk():
-    r = run(["lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,UUID,LABEL,FSTYPE,SIZE,MOUNTPOINTS,RM,TRAN,MODEL,SERIAL,PKNAME,RO"])
-    if r.returncode != 0:
-        die("lsblk failed: " + r.stderr)
-    devs = json.loads(r.stdout)["blockdevices"]
-    # lsblk depends on the udev database; fall back to probing the device directly so that
-    # detection still works early in boot or inside minimal environments.
-    for d in flatten(devs):
-        if d["type"] in FS_TYPES and not d.get("fstype"):
-            b = run(["blkid", "-o", "export", d["path"]])
-            if b.returncode == 0:
-                kv = dict(l.split("=", 1) for l in b.stdout.splitlines() if "=" in l)
-                d["fstype"], d["uuid"], d["label"] = kv.get("TYPE"), kv.get("UUID"), kv.get("LABEL")
-    return devs
+    try:
+        return vs.lsblk_tree()
+    except vs.StorageError as e:
+        die(str(e))
 
 
-def flatten(devs, parent=None):
-    for d in devs:
-        d["_parent"] = parent
-        yield d
-        yield from flatten(d.get("children") or [], d)
+flatten = vs.flatten
 
 
 def part_by_uuid(uuid):
     if not UUID_RE.match(uuid or ""):
         die("Invalid UUID format.")
-    for d in flatten(lsblk()):
-        if d.get("uuid") and d["uuid"].lower() == uuid.lower() and d["type"] in FS_TYPES and d.get("fstype"):
-            return d
-    die("No filesystem with that UUID was found.")
+    hits = [d for d in flatten(lsblk()) if d.get("uuid") and d["uuid"].lower() == uuid.lower() and d["type"] in FS_TYPES and d.get("fstype")
+            and not (d["type"] == "disk" and d.get("children"))]
+    if len(hits) > 1:
+        die(f"Refusing: {len(hits)} drives share filesystem UUID {uuid} ({', '.join(h['path'] for h in hits)}). "
+            "Disconnect one of them, or give one a new UUID, then try again.")
+    if not hits:
+        die("No filesystem with that UUID was found.")
+    return hits[0]
 
 
 def is_boot_dev(d):
@@ -132,20 +127,165 @@ def link_home(root):
         pass
 
 
+def volumes():
+    """Every filesystem on this PC (internal, external, USB, SD), minus the live boot medium's own partition."""
+    vols = vs.volumes_from_tree(lsblk(), vs.mount_table(), boot_devices())
+    return [v for v in vols if not v["boot_medium"]]
+
+
 def cmd_list_storage(_a):
     out = []
-    for d in flatten(lsblk()):
-        if d["type"] not in FS_TYPES or not d.get("fstype") or d["fstype"] in ("swap", "iso9660", "squashfs"):
-            continue
-        if is_boot_dev(d):
-            continue
-        par = d.get("_parent") or d
-        out.append({"path": d["path"], "uuid": d.get("uuid"), "label": d.get("label"), "fstype": d["fstype"],
-                    "size": int(d["size"] or 0), "removable": bool(d.get("rm") or par.get("rm")),
-                    "transport": par.get("tran"), "model": (par.get("model") or "").strip(), "serial": par.get("serial"),
-                    "mountpoints": [m for m in (d.get("mountpoints") or []) if m],
-                    "persist_ok": d["fstype"] in PERSIST_FS, "ro_ok": d["fstype"] in RO_FS})
+    for v in volumes():
+        v = dict(v)
+        v["persist_ok"] = v["fstype"] in PERSIST_FS and not v["locked"]     # may hold application state
+        v["ro_ok"] = v["supported"] and not v["locked"]                    # may be read; most are writable too
+        out.append(v)
     print(json.dumps({"partitions": out, "state": json.load(open(STATE)) if os.path.exists(STATE) else None}))
+
+
+def vol_dir(uuid):
+    return os.path.join(VOL_BASE, re.sub(r"[^0-9A-Za-z\-]", "", uuid))
+
+
+def mount_options(fstype, ro):
+    pw = pwd.getpwnam(USER)
+    o = ["nosuid", "nodev", "noexec"]
+    if fstype in ("vfat", "exfat", "ntfs"):
+        # no Unix permissions on these: present everything as owned by the desktop user, files never executable
+        o += [f"uid={pw.pw_uid}", f"gid={pw.pw_gid}", "dmask=0022", "fmask=0133"]
+    if fstype == "vfat":
+        o += ["shortname=mixed", "iocharset=utf8", "flush"]
+    if fstype == "ntfs":
+        o += ["windows_names"]
+    elif fstype in PERSIST_FS:
+        o += ["noatime"]
+    o.append("ro" if ro else "rw")
+    return ",".join(o)
+
+
+def mount_volume(d, want_ro=False):
+    """Mount a volume (once). Returns dict(mountpoint, rw, message). Never forces: a dirty/hibernated NTFS volume or an
+    ext4 volume that needs repair is mounted read-only and reported, never written to and never repaired here."""
+    if is_boot_dev(d):
+        die("Refusing: that is the live boot medium's own partition.")
+    if d["fstype"] in vs.LOCKED_TYPES:
+        die("That volume is encrypted and locked. Unlock it first; VictorLinux cannot unlock it for you yet.")
+    if d["fstype"] not in vs.FILESYSTEMS:
+        die(f"Unsupported filesystem '{d['fstype']}'.")
+    # already mounted somewhere (state volume, desktop automount, earlier call)? reuse it
+    for v in vs.volumes_from_tree(lsblk(), vs.mount_table(), boot_devices()):
+        if v["path"] == d["path"] and v["mounted"]:
+            mp = v["mountpoint"]
+            return {"mountpoint": mp, "rw": not v["mounted_ro"], "message": "already mounted" + (" read-only" if v["mounted_ro"] else "")}
+    mp = vol_dir(d["uuid"])
+    os.makedirs(mp, exist_ok=True)
+    fs = "ntfs3" if d["fstype"] == "ntfs" else d["fstype"]
+    note = ""
+    if not want_ro:
+        r = run(["mount", "-t", fs, "-o", mount_options(d["fstype"], False), d["path"], mp])
+        if r.returncode == 0:
+            return {"mountpoint": mp, "rw": True, "message": "mounted read-write"}
+        note = ("Could not mount read-write (" + (r.stderr.strip().splitlines() or ["unknown error"])[-1] + "); "
+                "mounted read-only instead. Nothing was repaired or forced. For an NTFS drive: fully shut Windows down "
+                "(disable Fast Startup / hibernation) and run its disk check, then reconnect.")
+    r = run(["mount", "-t", fs, "-o", mount_options(d["fstype"], True), d["path"], mp])
+    if r.returncode != 0:
+        try:
+            os.rmdir(mp)
+        except OSError:
+            pass
+        die("Mount failed: " + (r.stderr.strip() or "unknown error"))
+    return {"mountpoint": mp, "rw": False, "message": note or "mounted read-only as requested"}
+
+
+def cmd_volume_mount(a):
+    if len(a) not in (1, 2) or (len(a) == 2 and a[1] not in ("ro", "rw")):
+        die("usage: volume-mount UUID [ro|rw]")
+    print(json.dumps(mount_volume(part_by_uuid(a[0]), len(a) == 2 and a[1] == "ro")))
+
+
+def cmd_volume_umount(a):
+    if len(a) != 1:
+        die("usage: volume-umount UUID")
+    mp = vol_dir(a[0] if UUID_RE.match(a[0] or "") else die("Invalid UUID format."))
+    if os.path.commonpath([mp, VOL_BASE]) != VOL_BASE or not mounted_at(mp):
+        die("That volume is not mounted by VictorLinux.")
+    r = run(["umount", mp])
+    if r.returncode != 0:
+        die("Could not unmount (files may be open): " + r.stderr.strip())
+    try:
+        os.rmdir(mp)
+    except OSError:
+        pass
+    print("unmounted; safe to disconnect after the drive's activity light stops")
+
+
+def writable_by(path, uid, gid):
+    st = os.stat(path)
+    m = st.st_mode
+    if st.st_uid == uid:
+        return bool(m & 0o200)
+    if st.st_gid == gid:
+        return bool(m & 0o020)
+    return bool(m & 0o002)
+
+
+def cmd_dest_prepare(a):
+    """Create the requested application folder (and only it) on a mounted, writable volume."""
+    if len(a) != 2:
+        die("usage: dest-prepare UUID SUBPATH")
+    d = part_by_uuid(a[0])
+    m = mount_volume(d)
+    if not m["rw"]:
+        die("That drive is mounted read-only: " + m["message"])
+    try:
+        sub = vs.validate_subpath(a[1])
+        root = os.path.realpath(m["mountpoint"])
+        pw = pwd.getpwnam(USER)
+        cur = root
+        for part in [x for x in sub.split("/") if x]:
+            nxt = os.path.join(cur, part)
+            if os.path.islink(nxt):
+                die("Refusing: a component of that folder is a symbolic link.")
+            if not os.path.isdir(nxt):
+                os.mkdir(nxt, 0o755)
+                if d["fstype"] in PERSIST_FS:
+                    os.chown(nxt, pw.pw_uid, pw.pw_gid)      # only the folder we just created; never recursive
+            cur = nxt
+        final = vs.contained_path(root, sub)
+        if d["fstype"] in PERSIST_FS and not writable_by(final, pw.pw_uid, pw.pw_gid):
+            die(f"The folder '{sub or '/'}' already exists but is owned by someone else and the desktop user cannot write to it. "
+                "VictorLinux never changes ownership of existing files. Pick a new folder name (it will be created for you).")
+    except (vs.StorageError, OSError) as e:
+        die(f"Cannot prepare that folder: {e}")
+    print(json.dumps({"path": final, "mountpoint": m["mountpoint"], "rw": True}))
+
+
+def cmd_dest_apply(_a):
+    """Mount every drive named by the saved destination preferences (read from the active state volume)."""
+    st = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    root = st.get("data_root")
+    if st.get("mode") not in ("persistent", "temporary") or not root:
+        print(json.dumps({"applied": [], "message": "no storage state yet"}))
+        return
+    cfg = vs.load_config(os.path.join(root, "config", "storage.json"))
+    vols = volumes()
+    done = []
+    for role, rows in cfg["destinations"].items():
+        for e in rows if isinstance(rows, list) else []:
+            ref = e.get("ref", {}) if isinstance(e, dict) else {}
+            if not UUID_RE.match(str(ref.get("uuid", ""))):
+                continue
+            v, status, msg = vs.resolve_volume(vols, ref)
+            if not v:
+                done.append({"role": role, "status": status, "message": msg})
+                continue
+            try:
+                m = mount_volume(next(d for d in flatten(lsblk()) if d["path"] == v["path"]))
+                done.append({"role": role, "status": "mounted", "mountpoint": m["mountpoint"], "rw": m["rw"], "message": m["message"]})
+            except SystemExit:
+                done.append({"role": role, "status": "error", "message": "mount refused"})
+    print(json.dumps({"applied": done}))
 
 
 def cmd_persist_mount(a):
@@ -179,7 +319,7 @@ def cmd_persist_mount(a):
         die(f"Storage not writable: {e}")
     link_home(root)
     write_state({"mode": "persistent", "uuid": a[0], "device": d["path"], "label": d.get("label"),
-                 "fstype": d["fstype"], "data_root": root, "message": f"Persistent storage active on {d['path']} ({d.get('label') or a[0]})."})
+                 "fstype": d["fstype"], "data_root": root, "mount": DATA_MNT, "message": f"Persistent storage active on {d['path']} ({d.get('label') or a[0]})."})
     print("persistent storage mounted at " + root)
 
 
@@ -190,20 +330,43 @@ def persistence_root(mount):
     return legacy if os.path.isdir(legacy) else current
 
 
+PROBE_OPTS = {"ext4": "noload", "ext3": "noload", "ext2": "", "xfs": "norecovery", "btrfs": "", "f2fs": ""}
+
+
+def has_victor_tree(d):
+    """Peek (read-only, no journal replay) for an existing VictorLinux data folder on a Linux filesystem."""
+    mp = os.path.join(RUN, "probe")
+    os.makedirs(mp, exist_ok=True)
+    opts = ",".join(x for x in ("ro", "nosuid", "nodev", "noexec", PROBE_OPTS.get(d["fstype"], "")) if x)
+    if run(["mount", "-o", opts, d["path"], mp]).returncode != 0:
+        return False
+    try:
+        return os.path.isdir(os.path.join(mp, "victorlinux")) or os.path.isdir(os.path.join(mp, "tori"))
+    finally:
+        run(["umount", mp])
+
+
 def cmd_persist_auto(_a):
-    cands = [d for d in flatten(lsblk()) if d.get("label") in ("VICTORDATA", "TORIDATA") and d.get("fstype") in PERSIST_FS and not is_boot_dev(d)]
+    vols = flatten(lsblk())
+    cands = [d for d in vols if d.get("label") in ("VICTORDATA", "TORIDATA") and d.get("fstype") in PERSIST_FS and not is_boot_dev(d)]
+    if not cands:
+        # No labelled drive: accept exactly one Linux-filesystem volume that already holds a VictorLinux data folder.
+        cands = [d for d in flatten(lsblk()) if d["type"] in FS_TYPES and d.get("fstype") in PERSIST_FS and d.get("uuid")
+                 and not is_boot_dev(d) and not (d["type"] == "disk" and d.get("children")) and has_victor_tree(d)]
     if not cands:
         write_state({"mode": "missing", "data_root": None,
-                     "message": "No persistent storage found (expected VICTORDATA; legacy TORIDATA is also accepted). "
-                                "Nothing will be saved across reboots unless you pick storage or explicitly start a temporary session."})
+                     "message": "No persistent storage found (expected VICTORDATA, legacy TORIDATA, or one Linux volume that already has a "
+                                "victorlinux/ folder). Nothing will be saved across reboots unless you pick storage or explicitly start a "
+                                "temporary session."})
         print("missing")
         return
     if len(cands) > 1:
         write_state({"mode": "ambiguous", "data_root": None,
-                     "message": "Several VICTORDATA/TORIDATA partitions found; refusing to guess. Choose one explicitly."})
+                     "message": "Several candidate data drives found; refusing to guess. Choose one explicitly."})
         print("ambiguous")
         return
     cmd_persist_mount([cands[0]["uuid"]])
+    cmd_dest_apply([])
 
 
 def cmd_persist_temp(_a):
@@ -218,19 +381,7 @@ def cmd_persist_temp(_a):
 def cmd_mount_ro(a):
     if len(a) != 1:
         die("usage: mount-ro UUID")
-    d = part_by_uuid(a[0])
-    if is_boot_dev(d):
-        die("Refusing: live boot medium.")
-    if d["fstype"] not in RO_FS:
-        die(f"Unsupported filesystem '{d['fstype']}'.")
-    mp = os.path.join(RO_BASE, re.sub(r"[^0-9A-Za-z\-]", "", a[0]))
-    os.makedirs(mp, exist_ok=True)
-    if not mounted_at(mp):
-        fs = "ntfs3" if d["fstype"] == "ntfs" else d["fstype"]
-        r = run(["mount", "-t", fs, "-o", "ro,nosuid,nodev,noexec", d["path"], mp])
-        if r.returncode != 0:
-            die("Mount failed: " + r.stderr.strip())
-    print(mp)
+    print(mount_volume(part_by_uuid(a[0]), want_ro=True)["mountpoint"])
 
 
 def cmd_ssh_status(_a):
@@ -316,7 +467,8 @@ def cmd_power(a):
 
 
 COMMANDS = {"list-storage": cmd_list_storage, "persist-mount": cmd_persist_mount, "persist-auto": cmd_persist_auto,
-            "persist-temp": cmd_persist_temp, "mount-ro": cmd_mount_ro, "ssh-status": cmd_ssh_status,
+            "persist-temp": cmd_persist_temp, "mount-ro": cmd_mount_ro, "volume-mount": cmd_volume_mount,
+            "volume-umount": cmd_volume_umount, "dest-prepare": cmd_dest_prepare, "dest-apply": cmd_dest_apply, "ssh-status": cmd_ssh_status,
             "ssh-add-key": cmd_ssh_add_key, "ssh-enable": cmd_ssh_enable, "ssh-disable": cmd_ssh_disable,
             "ssh-reset": cmd_ssh_reset, "power": cmd_power}
 
