@@ -36,3 +36,8 @@ host keys are generated per drive on first use. Writing multiple attached drives
 
 ## Hardware-dependent limits
 exFAT mounting needs a kernel `exfat` driver (Linux ≥ 5.7) or `exfat-fuse` on the preparing host. Some cheap sticks misreport capacity: the tool trusts the kernel number, run `f3` first if in doubt.
+
+## Relation to the Arch edition's boot-media and storage changes (2026-11-15)
+The Arch edition's `scripts/make-usb.sh` now plans layouts with `scripts/victor_layout.py` (GPT for drives beyond 2 TiB, checked arithmetic, 4Kn refusal) and its runtime can use ordinary drives as destinations
+([../../docs/usb.md](../../docs/usb.md), [../../docs/storage.md](../../docs/storage.md)). **This Debian provisioning script was not changed.** It already creates a GPT via Ventoy and computes sizes from the real kernel sector
+count, but it assumes 512-byte sectors, was not re-tested for multi-terabyte drives, and the Debian runtime has no multi-drive destinations yet.

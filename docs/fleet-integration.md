@@ -25,7 +25,7 @@ The revised ISO has not been built or booted in this work. Existing Flash gadget
 
 Raw flashing writes an image. It does not create a `VICTORDATA` partition unless the provisioning path explicitly implements and verifies that step. VictorLinux's `scripts/make-usb.sh` provides its own layout/provisioning logic. The Android raw writer does not yet have equivalent VictorLinux data-partition provisioning.
 
-A phone exposing a read-only ISO does not provide persistent writable storage by itself. Use a separate USB/data drive. A future private ext4 data-image LUN is optional work: it must have exclusive ownership while exposed, explicit detach/flush, free-space checks and recovery. Never share an Android-mounted writable filesystem with the PC at the same time.
+A phone exposing a read-only ISO does not provide persistent writable storage by itself. Use a separate writable drive: either a `VICTORDATA`-labelled ext4 drive, or any ordinary ext4/btrfs/xfs volume chosen with `victor-storage state DRIVE`; models, documents and other files can then live on any other drive ([storage.md](storage.md)). Flash's own partition-creation path has **not** been updated for drives above 2 TiB: see [flash-companion-changes.md](flash-companion-changes.md). A future private ext4 data-image LUN is optional work: it must have exclusive ownership while exposed, explicit detach/flush, free-space checks and recovery. Never share an Android-mounted writable filesystem with the PC at the same time.
 
 Arch recognizes new `VICTORDATA` and old `TORIDATA` labels and reuses an old `tori` directory without moving it. Debian has its own root-level data layout. A shared partition label does not imply interchangeable settings or chat histories.
 

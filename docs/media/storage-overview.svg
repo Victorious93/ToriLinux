@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="t d">
+  <title id="t">VictorLinux uses several drives at once</title>
+  <desc id="d">A USB stick boots the read-only OS and holds application state. The PC's internal SSD holds documents. An existing external 2 TB drive holds models, downloads and backups. Nothing is reformatted.</desc>
+  <defs>
+    <style>
+      text{font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;fill:#e8eef7}
+      .bg{fill:#0b1018}.card{fill:#131c2b;stroke:#2c3d57;stroke-width:1.5}
+      .h{font-size:20px;font-weight:700}.s{font-size:14px;fill:#9fb0c8}.k{font-size:13px;fill:#b9a8ff;font-weight:600;letter-spacing:.08em}
+      .arrow{stroke:#7c6cf0;stroke-width:2.5;fill:none;marker-end:url(#a)}
+      .ok{fill:#7de0a8}
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7c6cf0"/></marker>
+  </defs>
+  <rect class="bg" width="960" height="420" rx="24"/>
+  <text x="40" y="52" class="h" style="font-size:24px">One PC, three drives, used together</text>
+  <text x="40" y="78" class="s">Plug them in any order. Drives are remembered by filesystem UUID, not /dev names. Nothing is reformatted.</text>
+
+  <rect class="card" x="40" y="110" width="270" height="250" rx="20"/>
+  <text x="60" y="142" class="k">BOOT MEDIA + STATE</text>
+  <text x="60" y="172" class="h">USB flash drive</text>
+  <text x="60" y="200" class="s">Read-only OS image (UEFI + BIOS)</text>
+  <text x="60" y="224" class="s">ext4 “VICTORDATA”:</text>
+  <text x="60" y="246" class="s">settings, chats, API-key hash, logs</text>
+  <text x="60" y="290" class="s ok">persistent · remembers your choices</text>
+  <text x="60" y="334" class="s">make-usb.sh · MBR ≤ 2 TiB, GPT beyond</text>
+
+  <rect class="card" x="345" y="110" width="270" height="250" rx="20"/>
+  <text x="365" y="142" class="k">INTERNAL SSD</text>
+  <text x="365" y="172" class="h">Documents</text>
+  <text x="365" y="200" class="s">any existing ext4 / NTFS / exFAT</text>
+  <text x="365" y="224" class="s">volume, no special label</text>
+  <text x="365" y="268" class="s">victor-storage use documents</text>
+  <text x="365" y="290" class="s ok">only your named folder is created</text>
+
+  <rect class="card" x="650" y="110" width="270" height="250" rx="20"/>
+  <text x="670" y="142" class="k">EXISTING 2 TB EXTERNAL DRIVE</text>
+  <text x="670" y="172" class="h">Models · Downloads · Backups</text>
+  <text x="670" y="200" class="s">models used in place (even read-only,</text>
+  <text x="670" y="222" class="s">split GGUF sets included)</text>
+  <text x="670" y="268" class="s">FAT32 refuses files ≥ 4 GiB</text>
+  <text x="670" y="290" class="s ok">your files stay untouched</text>
+
+  <path class="arrow" d="M310 235 H340"/>
+  <path class="arrow" d="M615 235 H645"/>
+  <text x="40" y="396" class="s">Drive removed? Saving to it stops with an explanation; nothing falls back to RAM or another disk.</text>
+</svg>

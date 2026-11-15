@@ -15,7 +15,6 @@ appended after the image. In MBR mode it takes the free slot 3. In GPT mode the 
 are kept verbatim, the backup GPT is relocated to the real end of the drive, and the data entry is added.
 """
 import argparse
-import binascii
 import os
 import struct
 import subprocess
@@ -311,7 +310,6 @@ def build_mbr(image, plan):
         mbr[446 + 32:446 + 48] = entry
         return bytes(mbr)
     ee_start = 1
-    occupied = [(e["start"], e["start"] + e["len"]) for e in image["mbr_entries"] if e["type"] != 0xEE and e["len"]]
     if any(e["type"] == 0xEE for e in image["mbr_entries"]):
         return bytes(mbr)                       # image already has a protective entry
     # protective entry in the first free slot; sized to the disk, saturated at 0xFFFFFFFF as the UEFI spec requires
@@ -329,7 +327,7 @@ def validate_written_gpt(read_at, total_lba, logical, expect_name_part=True):
     if prim[:8] != b"EFI PART":
         raise PlanError("primary GPT signature missing")
     f = struct.unpack("<IIIIQQQQ16sQIII", prim[8:92])
-    hcrc, cur, bak, first, last, ent_lba, n, esz, ecrc = f[2], f[4], f[5], f[6], f[7], f[9], f[10], f[11], f[12]
+    hcrc, bak, first, last, ent_lba, n, esz, ecrc = f[2], f[5], f[6], f[7], f[9], f[10], f[11], f[12]
     h = bytearray(prim[:92]); h[16:20] = b"\0\0\0\0"
     if _crc(bytes(h)) != hcrc:
         raise PlanError("primary GPT header CRC mismatch")
