@@ -586,7 +586,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, APP.import_job)
             if u.path == "/api/storage":
                 rc, out = APP.priv(["list-storage"])
-                return self._send(200 if rc == 0 else 500, json.loads(out) if rc == 0 else {"error": out})
+                if rc != 0:
+                    return self._send(500, {"error": out})
+                j = json.loads(out)
+                j["summary"] = tc.storage_status()          # same dictionary `victor-storage status --json` prints
+                return self._send(200, j)
         except tc.GGUFError as e:
             return self._send(400, {"error": f"Invalid GGUF: {e}"})
         except (KeyError, ValueError) as e:
@@ -647,6 +651,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, self.start_import(b))
             if p == "/api/storage/select":
                 rc, out = APP.priv(["persist-mount", str(b.get("uuid", ""))])
+                if rc == 0:
+                    APP.priv(["dest-apply"])
+                    tc.link_destinations()
+                return self._send(200 if rc == 0 else 400, {"ok": rc == 0, "message" if rc == 0 else "error": out})
+            if p == "/api/storage/dest":
+                try:
+                    return self._send(200, tc.storage_use(str(b.get("role", "")), str(b.get("drive", "")), str(b.get("folder", "")),
+                                                          bool(b.get("readonly"))))
+                except tc.vs.StorageError as e:
+                    return self._send(400, {"ok": False, "error": str(e)})
+            if p == "/api/storage/dest/clear":
+                try:
+                    return self._send(200, tc.storage_clear(str(b.get("role", "")), b.get("uuid") or None))
+                except tc.vs.StorageError as e:
+                    return self._send(400, {"ok": False, "error": str(e)})
+            if p in ("/api/storage/mount", "/api/storage/eject"):
+                args = ["volume-mount", str(b.get("uuid", "")), "ro" if b.get("readonly") else "rw"] if p.endswith("mount") \
+                    else ["volume-umount", str(b.get("uuid", ""))]
+                rc, out = APP.priv(args)
+                tc._VOL_CACHE["t"] = 0.0
                 return self._send(200 if rc == 0 else 400, {"ok": rc == 0, "message" if rc == 0 else "error": out})
             if p == "/api/storage/temp":
                 rc, out = APP.priv(["persist-temp"])
@@ -742,7 +766,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if job.get("state") == "running":
             return {"ok": False, "error": "An import is already running."}
         src = str(b.get("src", ""))
-        dest = tc.data_path("models")
+        if b.get("destination") == "storage":          # a models library chosen in the Storage tab (any drive)
+            dest = tc.dest_dir("models")
+            if not dest:
+                return {"ok": False, "error": "The chosen models drive is not connected or not writable. Open the Storage tab."}
+        else:
+            dest = tc.data_path("models")
         if not dest:
             return {"ok": False, "error": "Choose storage first."}
         sha = (b.get("sha256") or "").strip() or None

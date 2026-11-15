@@ -13,6 +13,8 @@ import struct
 import subprocess
 import time
 
+import victorstorage as vs
+
 RUN_DIR = os.environ.get("VICTOR_RUN_DIR", "/run/victor")
 PERSIST_STATE = os.path.join(RUN_DIR, "persist.json")
 TEMP_DATA = "/run/victor-temp-data"          # explicit temporary-session storage (RAM)
@@ -46,9 +48,23 @@ def data_root():
 def persist_state():
     try:
         with open(PERSIST_STATE) as f:
-            return json.load(f)
+            st = json.load(f)
     except (OSError, ValueError):
         return {"mode": "unknown", "message": "Storage has not been initialised yet.", "data_root": None}
+    # A drive that was unplugged leaves an empty directory behind. Writing there would silently land in RAM (or on another
+    # disk), so a persistent state whose mount is gone is reported as missing and data_root becomes None until it returns.
+    mount = st.get("mount")
+    if st.get("mode") == "persistent" and mount and not os.environ.get("VICTOR_DATA"):
+        try:
+            os.stat(st.get("data_root") or mount)
+            alive = os.path.ismount(mount)
+        except OSError:
+            alive = False
+        if not alive:
+            return {"mode": "missing", "data_root": None, "was": st,
+                    "message": "The persistent storage drive was disconnected. Saving is stopped. Reconnect it (it is found again "
+                               "automatically) or choose other storage in the Storage tab; nothing is written to RAM instead."}
+    return st
 
 
 def data_path(*parts):
@@ -56,6 +72,164 @@ def data_path(*parts):
     if not root:
         return None
     return os.path.join(root, *parts)
+
+
+# ------------------------------------------------------- storage destinations --
+_VOL_CACHE = {"t": 0.0, "v": [], "sig": None}
+
+
+def volume_snapshot(max_age=2.0):
+    """Connected volumes, cached briefly so per-request checks stay cheap but still notice a removed drive."""
+    now = time.monotonic()
+    mounts = vs.mount_table()
+    sig = tuple(sorted((k, tuple(m["mountpoint"] + ("ro" if m["ro"] else "rw") for m in v)) for k, v in mounts.items()))
+    if now - _VOL_CACHE["t"] > max_age or sig != _VOL_CACHE["sig"]:       # a mount/unmount invalidates immediately
+        try:
+            boot = set()
+            for mp in ("/run/archiso/bootmnt", "/run/archiso/copytoram"):
+                r = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "--target", mp], capture_output=True, text=True)
+                if r.returncode == 0 and r.stdout.strip().startswith("/dev/"):
+                    boot.add(os.path.realpath(r.stdout.strip()))
+            _VOL_CACHE["v"] = [v for v in vs.volumes_from_tree(vs.lsblk_tree(), mounts, boot) if not v["boot_medium"]]
+        except (vs.StorageError, OSError, ValueError):
+            _VOL_CACHE["v"] = []
+        _VOL_CACHE["t"], _VOL_CACHE["sig"] = now, sig
+    return _VOL_CACHE["v"]
+
+
+PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
+
+
+def priv(args, stdin=None, timeout=120):
+    """Run the restricted privileged helper. Returns (returncode, text)."""
+    cmd = [PRIV] + list(args) if os.geteuid() == 0 else ["sudo", "-n", PRIV] + list(args)
+    try:
+        r = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 1, str(e)
+    return r.returncode, (r.stdout.strip() if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
+
+
+def storage_use(role, selector, folder="", readonly=False):
+    """Choose where `role` files go: any connected volume + folder. Shared by the CLI and the Control Center.
+    Mounts the drive and creates ONLY the requested folder. Never formats, relabels or changes other contents."""
+    vols = volume_snapshot(0)
+    v = vs.select_candidates(vols, selector)
+    cfg = load_storage_config()
+    vs.set_destination(cfg, role, v, folder, readonly_ok=readonly)
+    if not v.get("uuid") or not vs.UUID_RE.match(v["uuid"]):
+        raise vs.StorageError("That volume has no filesystem UUID, so it cannot be remembered reliably.")
+    if readonly:
+        if role not in vs.MULTI_ROLES:
+            raise vs.StorageError("Read-only use is for model libraries; other destinations must be writable.")
+        rc, out = priv(["volume-mount", v["uuid"], "ro"])
+        if rc != 0:
+            raise vs.StorageError(out)
+        mp = json.loads(out)["mountpoint"]
+        if not os.path.isdir(vs.contained_path(mp, folder)):
+            raise vs.StorageError(f"Folder '{folder}' does not exist on that drive (read-only use never creates folders).")
+    else:
+        rc, out = priv(["dest-prepare", v["uuid"], folder])
+        if rc != 0:
+            raise vs.StorageError(out)
+    durable = save_storage_config(cfg)
+    _VOL_CACHE["t"] = 0.0
+    link_destinations()
+    return {"ok": True, "durable": durable, "status": storage_status()["destinations"].get(role, []),
+            "message": "Saved." if durable else "Saved for this session only: there is no persistent storage, so this choice is lost on reboot."}
+
+
+def storage_clear(role, uuid=None, subpath=None):
+    cfg = load_storage_config()
+    vs.clear_destination(cfg, role, uuid, subpath)
+    durable = save_storage_config(cfg)
+    link_destinations()
+    return {"ok": True, "durable": durable}
+
+
+def link_destinations(home=None):
+    """Make the choices visible to ordinary desktop programs: ~/victor-storage/<role> links and GTK file-chooser bookmarks.
+    Dangling links (drive removed) fail writes with an error rather than writing somewhere else. Existing real folders
+    and files in the home directory are never replaced."""
+    home = home or os.path.expanduser("~")
+    base = os.path.join(home, "victor-storage")
+    try:
+        os.makedirs(base, exist_ok=True)
+        rows = vs.destination_status(load_storage_config(), volume_snapshot(0))
+        wanted = {}
+        for role, lst in rows.items():
+            for i, r in enumerate(lst):
+                if r["path"]:
+                    wanted[role if i == 0 else f"{role}-{i + 1}"] = r["path"]
+        for name in os.listdir(base):
+            full = os.path.join(base, name)
+            if os.path.islink(full) and name not in wanted:
+                os.unlink(full)
+        for name, target in wanted.items():
+            full = os.path.join(base, name)
+            if os.path.islink(full):
+                if os.readlink(full) == target:
+                    continue
+                os.unlink(full)
+            if not os.path.lexists(full):
+                os.symlink(target, full)
+        lines = []
+        for name, target in sorted(wanted.items()):
+            from urllib.parse import quote
+            lines.append(f"file://{quote(target)} VictorLinux {name}")
+        bm_dir = os.path.join(home, ".config", "gtk-3.0")
+        os.makedirs(bm_dir, exist_ok=True)
+        keep = []
+        bm = os.path.join(bm_dir, "bookmarks")
+        if os.path.exists(bm):
+            keep = [l for l in open(bm).read().splitlines() if l and " VictorLinux " not in l]
+        atomic_write(bm, "\n".join(keep + lines) + "\n", 0o644)
+    except OSError:
+        pass
+
+
+def storage_config_path():
+    return data_path("config", "storage.json")
+
+
+def load_storage_config():
+    p = storage_config_path()
+    return vs.load_config(p) if p else vs.empty_config()
+
+
+def save_storage_config(cfg):
+    p = storage_config_path()
+    if not p:
+        raise vs.StorageError("No storage state is active, so there is nowhere to save these choices. Choose persistent storage or a temporary session first.")
+    atomic_write(p, json.dumps(cfg, indent=2), 0o600)
+    return persist_state().get("mode") == "persistent"      # False = saved to RAM only (temporary session)
+
+
+def storage_status():
+    return vs.summarize(load_storage_config(), volume_snapshot(0), persist_state())
+
+
+def dest_dir(role, need_write=True):
+    """Where files for `role` go right now, or None. Never falls back to RAM, the root disk or another drive."""
+    rows = vs.destination_status(load_storage_config(), volume_snapshot()).get(role)
+    return vs.usable_path(rows, need_write)
+
+
+def storage_model_dirs():
+    rows = vs.destination_status(load_storage_config(), volume_snapshot()).get("models", [])
+    return [r["path"] for r in rows if r["status"] in ("active", "readonly") and r["path"]]
+
+
+def fstype_of_path(path):
+    """Filesystem type of the mount that holds `path` (longest matching mount point)."""
+    path = os.path.realpath(path)
+    best, fs = "", None
+    for entries in vs.mount_table().values():
+        for m in entries:
+            mp = m["mountpoint"]
+            if (path == mp or path.startswith(mp.rstrip("/") + "/")) and len(mp) > len(best):
+                best, fs = mp, m["fstype"]
+    return {"ntfs3": "ntfs", "fuseblk": "ntfs"}.get(fs, fs)
 
 
 def settings_path():
@@ -439,6 +613,7 @@ def list_models(extra_dirs=()):
     if d:
         dirs.append(d)
     dirs.extend(extra_dirs)
+    dirs.extend(x for x in storage_model_dirs() if x not in dirs)      # model libraries chosen in Storage, used in place
     seen, out = set(), []
     for base in dirs:
         if not os.path.isdir(base):
@@ -504,6 +679,7 @@ def import_model(src, dest_dir, expected_sha256=None, progress=None, overwrite=F
     free = shutil.disk_usage(dest_dir).free
     if hdr["size"] + (64 << 20) > free:
         raise ValueError(f"Not enough free space: need {hdr['size']} bytes, have {free}.")
+    _check_dest_limits(dest_dir, [hdr["size"]])
     tmp = dest + ".part"
     h = hashlib.sha256()
     done = 0
@@ -529,6 +705,16 @@ def import_model(src, dest_dir, expected_sha256=None, progress=None, overwrite=F
         if os.path.exists(tmp):
             os.unlink(tmp)
     return dest, got
+
+
+def _check_dest_limits(dest_dir, sizes):
+    """Refuse BEFORE copying when a file cannot fit the destination filesystem (FAT32: 4 GiB minus one byte per file)."""
+    fs = fstype_of_path(dest_dir)
+    try:
+        for n in sizes:
+            vs.check_fits(n, fs)
+    except vs.StorageError as e:
+        raise ValueError(str(e)) from None
 
 
 def split_members(first):
@@ -564,6 +750,7 @@ def import_split_set(first, dest_dir, progress=None, overwrite=False):
     free = shutil.disk_usage(dest_dir).free
     if total + (64 << 20) > free:
         raise ValueError(f"Not enough free space: need {total} bytes for {len(members)} shards, have {free}.")
+    _check_dest_limits(dest_dir, sizes)
     tmps = [d + ".part" for d in dests]
     digests, done = [], 0
     try:

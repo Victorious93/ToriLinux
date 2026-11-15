@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Choose where VictorLinux keeps files. Same implementation as the Control Center's Storage tab.
+
+  victor-storage list [--json]                         every drive/volume on this PC
+  victor-storage status [--json]                       active destinations and persistent/temporary state
+  victor-storage use ROLE DRIVE [--folder DIR] [--read-only]
+        ROLE: models downloads documents outputs backups     DRIVE: UUID, LABEL or /dev path (see `list`)
+  victor-storage clear ROLE [DRIVE]                    stop using a destination (files are left untouched)
+  victor-storage state DRIVE | state --temporary       where application state (settings, chats, keys) lives
+  victor-storage mount DRIVE [--read-only] | eject DRIVE
+  victor-storage apply                                 re-mount the saved drives (also runs at boot)
+  victor-storage check ROLE SIZE_OR_FILE               would this file fit? (FAT32 4 GiB limit, free space)
+
+Selecting a drive never formats, repartitions, relabels or erases it; only the requested folder is created."""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "victorlinux"))
+import victorcommon as tc  # noqa: E402
+import victorstorage as vs  # noqa: E402
+
+
+def g(n):
+    return "?" if n is None else (f"{n / 2**40:.2f} TiB" if n >= 2**40 else f"{n / 2**30:.1f} GiB")
+
+
+def cmd_list(a):
+    vols = tc.volume_snapshot(0)
+    if a.json:
+        return print(json.dumps(vols, indent=2))
+    if not vols:
+        return print("No drives with a usable filesystem found.")
+    print(f"{'DEVICE':<14}{'KIND':<14}{'FS':<8}{'LABEL':<16}{'SIZE':>10}{'FREE':>10}  {'MOUNT':<28}UUID / NOTES")
+    for v in vols:
+        flags = []
+        if v["locked"]:
+            flags.append("LOCKED")
+        if v["mounted_ro"] or v["device_ro"]:
+            flags.append("read-only")
+        if v.get("duplicate_uuid"):
+            flags.append("DUPLICATE UUID")
+        if v.get("duplicate_label"):
+            flags.append("duplicate label")
+        if v["fstype"] == "vfat":
+            flags.append("files < 4 GiB only")
+        if not v["state_ok"] and not v["locked"]:
+            flags.append("not for app state")
+        print(f"{v['path']:<14}{v['kind']:<14}{v['fstype']:<8}{(v['label'] or '-')[:15]:<16}{g(v['size']):>10}{g(v['free']):>10}  "
+              f"{(v['mountpoint'] or '-')[:27]:<28}{v['uuid'] or '-'}  {' '.join(flags)}  {v['model']} {v['serial'] or ''}".rstrip())
+
+
+def cmd_status(a):
+    st = tc.storage_status()
+    if a.json:
+        return print(json.dumps(st, indent=2))
+    s = st["state"]
+    print(f"Application state: {s['mode'].upper()}  {s['data_root'] or ''}")
+    print(f"  {s['message']}")
+    if not st["destinations"]:
+        print("File destinations: none chosen (nothing is redirected). Use: victor-storage use models DRIVE --folder models")
+    for role, rows in st["destinations"].items():
+        for r in rows:
+            where = r["path"] or "-"
+            print(f"  {role:<10}{r['status'].upper():<14}{where}  [{r['fstype']}, {'persistent' if r['persistent'] else 'n/a'}]  free {g(r['free'])}")
+            if r["message"]:
+                print(f"            {r['message']}")
+
+
+def cmd_use(a):
+    try:
+        r = tc.storage_use(a.role, a.drive, a.folder, a.read_only)
+    except vs.StorageError as e:
+        sys.exit(f"error: {e}")
+    print(r["message"])
+    for row in r["status"]:
+        print(f"  {a.role}: {row['status']} {row['path'] or ''}")
+
+
+def cmd_clear(a):
+    uuid = vs.select_candidates(tc.volume_snapshot(0), a.drive)["uuid"] if a.drive else None
+    tc.storage_clear(a.role, uuid)
+    print(f"{a.role}: destination cleared (no files were touched).")
+
+
+def cmd_state(a):
+    if a.temporary:
+        rc, out = tc.priv(["persist-temp"])
+    else:
+        if not a.drive:
+            sys.exit("give a DRIVE or --temporary")
+        try:
+            v = vs.select_candidates(tc.volume_snapshot(0), a.drive)
+        except vs.StorageError as e:
+            sys.exit(f"error: {e}")
+        if not v["state_ok"]:
+            sys.exit(f"error: {v['fstype']} cannot hold application state (needs Unix permissions and locking); use ext4, btrfs or xfs. "
+                     "It is still fine for models, documents, downloads and backups.")
+        rc, out = tc.priv(["persist-mount", v["uuid"]])
+        if rc == 0:
+            tc.priv(["dest-apply"])
+    print(out)
+    sys.exit(rc)
+
+
+def cmd_mount(a):
+    v = vs.select_candidates(tc.volume_snapshot(0), a.drive)
+    rc, out = tc.priv(["volume-mount", v["uuid"]] + (["ro"] if a.read_only else []))
+    print(json.loads(out)["mountpoint"] + "  " + json.loads(out)["message"] if rc == 0 else f"error: {out}")
+    sys.exit(rc)
+
+
+def cmd_eject(a):
+    v = vs.select_candidates(tc.volume_snapshot(0), a.drive)
+    rc, out = tc.priv(["volume-umount", v["uuid"]])
+    print(out if rc == 0 else f"error: {out}")
+    sys.exit(rc)
+
+
+def cmd_apply(_a):
+    rc, out = tc.priv(["dest-apply"])
+    tc.link_destinations()
+    print(out)
+    sys.exit(rc)
+
+
+def cmd_check(a):
+    try:
+        size = os.path.getsize(a.size) if os.path.exists(a.size) else int(a.size)
+    except (ValueError, OSError):
+        sys.exit("SIZE_OR_FILE must be a byte count or an existing file")
+    rows = vs.destination_status(tc.load_storage_config(), tc.volume_snapshot(0)).get(a.role)
+    d = vs.usable_path(rows)
+    if not d:
+        sys.exit(f"error: no usable writable '{a.role}' destination (run `victor-storage status`)")
+    try:
+        vs.check_fits(size, tc.fstype_of_path(d), shutil_free(d))
+    except vs.StorageError as e:
+        sys.exit(f"error: {e}")
+    print(f"OK: {g(size)} fits in {d}")
+
+
+def shutil_free(p):
+    import shutil
+    return shutil.disk_usage(p).free
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for n in ("list", "status"):
+        sub.add_parser(n).add_argument("--json", action="store_true")
+    u = sub.add_parser("use"); u.add_argument("role", choices=vs.ROLES); u.add_argument("drive")
+    u.add_argument("--folder", default=""); u.add_argument("--read-only", action="store_true")
+    c = sub.add_parser("clear"); c.add_argument("role", choices=vs.ROLES); c.add_argument("drive", nargs="?")
+    st = sub.add_parser("state"); st.add_argument("drive", nargs="?"); st.add_argument("--temporary", action="store_true")
+    m = sub.add_parser("mount"); m.add_argument("drive"); m.add_argument("--read-only", action="store_true")
+    sub.add_parser("eject").add_argument("drive")
+    sub.add_parser("apply")
+    k = sub.add_parser("check"); k.add_argument("role", choices=vs.ROLES); k.add_argument("size")
+    a = ap.parse_args()
+    try:
+        {"list": cmd_list, "status": cmd_status, "use": cmd_use, "clear": cmd_clear, "state": cmd_state, "mount": cmd_mount,
+         "eject": cmd_eject, "apply": cmd_apply, "check": cmd_check}[a.cmd](a)
+    except vs.StorageError as e:
+        sys.exit(f"error: {e}")
+
+
+if __name__ == "__main__":
+    main()
