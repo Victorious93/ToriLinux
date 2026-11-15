@@ -308,3 +308,33 @@ def test_selecting_a_folder_never_formats_relabels_or_chowns_existing_content(wo
         sh("umount", mnt)
     assert d.uuid() == uuid_before
     assert sh("blkid", "-p", "-s", "LABEL", "-o", "value", d.path).stdout.strip() == "KEEPME"
+
+
+def test_cli_matches_control_center_data_and_enforces_rules(world):
+    make, disks, tmp = world
+    usb = make("usb", "VICTORDATA"); ext = make("ext", "Big Drive", "4G"); usb.attach(); ext.attach()
+    priv("persist-auto")
+    cli = os.path.join(LIB, "..", "..", "bin", "victor-storage")
+    env = dict(os.environ, VICTOR_PRIV=PRIV)
+
+    def run(*a, check=True):
+        return subprocess.run([sys.executable, cli, *a], capture_output=True, text=True, env=env, check=check)
+    listing = run("list").stdout
+    assert "Big Drive" in listing and ext.uuid() in listing and "VICTORDATA" in listing
+    out = run("use", "models", "Big Drive", "--folder", "My Models").stdout            # selected by label, saved by UUID
+    assert "Saved." in out
+    cfg = json.load(open("/mnt/victordata/victorlinux/config/storage.json"))
+    assert cfg["destinations"]["models"][0]["ref"]["uuid"] == ext.uuid() and "/dev/" not in json.dumps(cfg["destinations"])
+    cli_status = json.loads(run("status", "--json").stdout)
+    assert cli_status["destinations"] == tc.storage_status()["destinations"]          # exactly what the GUI is given
+    assert "active" in run("status").stdout and "persistent" in run("status").stdout
+    bad = run("use", "documents", "Big Drive", "--folder", "../../etc", check=False)
+    assert bad.returncode != 0 and ".." in bad.stderr
+    chk = run("check", "models", str(1 << 20))
+    assert "OK" in chk.stdout
+    toobig = run("check", "models", str(10 ** 15), check=False)
+    assert toobig.returncode != 0 and "Not enough free space" in toobig.stderr
+    state_on_exfat = run("state", "Big Drive", check=False)                             # ext4 here, so this one is allowed...
+    assert state_on_exfat.returncode == 0 or "cannot" in state_on_exfat.stderr
+    assert run("clear", "models").returncode == 0
+    assert "models" not in json.loads(run("status", "--json").stdout)["destinations"]

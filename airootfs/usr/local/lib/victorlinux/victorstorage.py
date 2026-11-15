@@ -92,7 +92,7 @@ def lsblk_tree():
         if d["type"] in ("part", "disk", "loop", "crypt", "lvm") and not d.get("fstype"):
             b = _run(["blkid", "-p", "-o", "export", d["path"]])       # -p: probe the device itself, never the stale blkid cache (device names get reused)
             if b.returncode == 0:
-                kv = dict(l.split("=", 1) for l in b.stdout.splitlines() if "=" in l)
+                kv = {k: re.sub(r"\\(.)", r"\1", v) for k, v in (l.split("=", 1) for l in b.stdout.splitlines() if "=" in l)}   # export format escapes spaces
                 d["fstype"], d["uuid"], d["label"] = kv.get("TYPE"), kv.get("UUID"), kv.get("LABEL")
                 d["partuuid"] = d.get("partuuid") or kv.get("PARTUUID")
     return devs

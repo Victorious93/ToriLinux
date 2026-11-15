@@ -144,7 +144,7 @@ function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt
 async function refresh(){const s=await api("/api/status");if(s.error){$("banners").innerHTML=`<div class="banner bad">${esc(s.error)}</div>`;return}
  S=s;const p=s.persist,mode=p.mode;const cls={persistent:"ok",temporary:"warn"}[mode]||"bad";
  $("storagePill").className="pill "+cls;$("storagePill").textContent={persistent:"persistent storage",temporary:"TEMPORARY – not saved",readonly:"storage read-only",missing:"no storage",ambiguous:"choose storage"}[mode]||mode;
- let b="";if(mode!=="persistent")b+=`<div class="banner ${mode==="temporary"?"warn":"bad"}"><b>${esc(p.message)}</b> ${mode!=="temporary"?'Open the Storage tab to choose a drive, or start a temporary session.':""}</div>`;
+ let b="";for(const q of (s.storage_problems||[]))b+=`<div class="banner bad"><b>${esc(q.role)} destination unavailable (${esc(q.status)}).</b> ${esc(q.message)} Saving to it is stopped; nothing is written anywhere else. Reconnect the drive or open the Storage tab.</div>`;if(mode!=="persistent")b+=`<div class="banner ${mode==="temporary"?"warn":"bad"}"><b>${esc(p.message)}</b> ${mode!=="temporary"?'Open the Storage tab to choose a drive, or start a temporary session.':""}</div>`;
  if(s.backend.selected==="cpu"||!s.backend.selected)b+=`<div class="banner warn"><b>CPU fallback:</b> ${esc(s.backend.reason)}</div>`;
  const acc=s.llm.accel;if(s.llm.running&&acc&&acc.gpu_accelerated===false&&s.llm.info.backend!=="cpu")b+=`<div class="banner bad"><b>GPU backend selected but 0 layers were offloaded.</b> Inference is running on the CPU. See Logs.</div>`;
  $("banners").innerHTML=b;

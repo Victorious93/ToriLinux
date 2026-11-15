@@ -366,6 +366,7 @@ class App:
         up = self.llm.running()
         return {
             "persist": tc.persist_state(), "data_root": tc.data_root(),
+            "storage_problems": [{"role": r["role"], "status": r["status"], "message": r["message"]} for r in tc.storage_status()["problems"]],
             "ram": tc.ram_info(), "gpus": gl, "render_nodes": tc.render_nodes(),
             "backends_present": tc.backends(), "backend": {"selected": be, "reason": reason},
             "llm": {"running": up, "info": self.llm_info if up else {}, "accel": self.accel_report() if up else None,
