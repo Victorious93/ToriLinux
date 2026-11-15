@@ -169,7 +169,9 @@ def plan_layout(disk_bytes, image, logical=512, physical=512, table="auto", data
     if gpt_capable and image["gpt"] is None and not image.get("sysarea_free", True):
         gpt_capable, why_not = False, "sectors 1-33 of the image hold data other than a partition table (a boot loader stage), which a GPT would overwrite"
     free_slot = [e for e in image["mbr_entries"] if e["type"] == 0 and e["len"] == 0 and e["start"] == 0]
-    mbr_slot_ok = any(e["slot"] == 3 for e in free_slot) and image["gpt"] is None
+    # The proven small-drive layout: the image's MBR has slot 3 free and is not a protective MBR (no 0xEE entry), so the kernel reads
+    # the MBR and a slot-3 entry is visible. An image that carries a GPT as well keeps it untouched in this mode.
+    mbr_slot_ok = any(e["slot"] == 3 for e in free_slot) and not any(e["type"] == 0xEE for e in image["mbr_entries"])
 
     _el, _n, _esz, g_first, array_sectors = gpt_geometry(image, logical)
     gpt_overhead_bytes = (1 + array_sectors) * logical             # backup header + backup array at end of disk
@@ -214,7 +216,7 @@ def plan_layout(disk_bytes, image, logical=512, physical=512, table="auto", data
     start_lba, len_lba = part["start"] // logical, part["size"] // logical
     if chosen == "mbr":
         if not mbr_slot_ok:
-            raise PlanError("the image's MBR slot 3 is not free (or the image carries a GPT); the MBR layout cannot be used")
+            raise PlanError("the image's MBR slot 3 is not free or the MBR is a protective MBR; the MBR layout cannot be used")
         if start_lba >= MBR_MAX_SECTORS or len_lba >= MBR_MAX_SECTORS or start_lba + len_lba > MBR_MAX_SECTORS:
             if not allow_mbr_cap:
                 raise PlanError("the data partition does not fit MBR's 32-bit sector fields; use --table gpt")

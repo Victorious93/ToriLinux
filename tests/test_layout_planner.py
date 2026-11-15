@@ -104,6 +104,22 @@ def test_32bit_boundary_exact(iso_gpt, iso_mbr):
     assert any("capped" in n or "unavailable" in n for n in capped["notes"])
 
 
+def test_hybrid_image_with_gpt_and_free_mbr_slot_keeps_the_proven_mbr_layout_when_it_fits(iso_gpt):
+    assert plan(iso_gpt, 64 * GIB)["table"] == "mbr"                    # same as the previous script's behaviour
+    assert plan(iso_gpt, 64 * GIB, table="gpt")["table"] == "gpt"       # GPT on request
+    assert plan(iso_gpt, 4 * TIB)["table"] == "gpt"                     # and automatically where MBR cannot represent it
+
+
+def test_protective_mbr_image_can_never_use_mbr_slot(tmp_path):
+    p = tmp_path / "p.iso"; make_iso(str(p), kind="gpt")
+    with open(p, "r+b") as f:
+        f.seek(446 + 16 * 2); f.write(struct.pack("<B3sB3sII", 0, b"\0\0\0", 0xEE, b"\0\0\0", 1, 100))
+    img = vl.inspect_image(str(p))
+    assert plan(img, 64 * GIB)["table"] == "gpt"
+    with pytest.raises(vl.PlanError, match="slot 3"):
+        plan(img, 64 * GIB, table="mbr")
+
+
 def test_just_under_limit_stays_mbr(iso_mbr):
     disk = vl.MBR_MAX_SECTORS * 512 - 2 * GIB
     assert plan(iso_mbr, disk)["table"] == "mbr"
@@ -183,7 +199,7 @@ def test_mbr_slot3_written_for_ordinary_disk(tmp_path):
 
 def test_cli_reports_plan_without_writing(tmp_path, capsys):
     iso = tmp_path / "g.iso"; make_iso(str(iso), kind="gpt")
-    assert vl.main(["plan", "--iso", str(iso), "--disk-bytes", str(2 * TIB)]) == 0
+    assert vl.main(["plan", "--iso", str(iso), "--disk-bytes", str(3 * TIB)]) == 0
     out = capsys.readouterr().out
     assert "TABLE=gpt" in out and "DATA_BYTES=" in out
     assert vl.main(["plan", "--iso", str(iso), "--disk-bytes", str(2 * TIB), "--logical", "4096"]) == 3
