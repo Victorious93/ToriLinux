@@ -223,7 +223,9 @@ def test_real_grub_hybrid_image_keeps_its_gpt_geometry_and_sgdisk_agrees(tmp_pat
     tree = tmp_path / "iso" / "boot" / "grub"; tree.mkdir(parents=True)
     (tree / "grub.cfg").write_text("echo hi\n")
     iso = tmp_path / "r.iso"
-    subprocess.run(["grub-mkrescue", "-o", str(iso), str(tmp_path / "iso")], check=True, capture_output=True)
+    r = subprocess.run(["grub-mkrescue", "-o", str(iso), str(tmp_path / "iso")], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip("grub-mkrescue present but cannot build an image here (missing grub-pc-bin/grub-efi-amd64-bin/mtools?): " + r.stderr[-200:])
     img = vl.inspect_image(str(iso))
     assert img["gpt"] and img["gpt"]["entries_lba"] != 2          # array is NOT at the textbook location (APM blocks interleaved)
     disk = _sparse_disk(tmp_path, 3 * TIB)

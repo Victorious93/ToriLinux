@@ -82,7 +82,8 @@ def test_gpt_image_keeps_entries_and_sgdisk_validates_after_write(tmp_path, loop
     tree = tmp_path / "t" / "boot" / "grub"; tree.mkdir(parents=True)
     (tree / "grub.cfg").write_text("serial --unit=0\nterminal_input serial console\nterminal_output serial console\necho VICTORLINUX-TEST-GRUB-BOOTED\n")
     iso = str(tmp_path / "g.iso")
-    sh("grub-mkrescue", "-o", iso, str(tmp_path / "t"))
+    if sh("grub-mkrescue", "-o", iso, str(tmp_path / "t"), check=False).returncode != 0:
+        pytest.skip("grub-mkrescue cannot build an image here")
     (tmp_path / "g.iso.sha256").write_text(hashlib.sha256(open(iso, "rb").read()).hexdigest() + "  g.iso\n")
     img, dev = loopdisk(3 << 40)                                                       # sparse 3 TiB
     r = usb("write", "--iso", iso, "--device", dev, "--confirm-serial", "LOOPTEST")
