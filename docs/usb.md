@@ -65,6 +65,29 @@ Options for the default (`raw`) layout:
 | `--reserve-mib N` | unallocated space kept at the end (default 1024) |
 | `--min-data-gib N` | refuse drives that would leave less data space (default 2) |
 | `--allow-mbr-cap` | accept a data partition limited to MBR's range when GPT is impossible for this image |
+| `--headroom-mib N` | free space kept after the OS image so a later, larger image fits with `update` (default 2048; `0` = none) |
+
+### Updating the OS without touching your data
+
+```sh
+sudo scripts/make-usb.sh verify --iso out/NEW.iso --device /dev/sdX          # optional, read-only
+sudo scripts/make-usb.sh update --iso out/NEW.iso --device /dev/sdX --confirm-serial ACTUAL_SERIAL
+```
+
+`update` rewrites only the OS image area at the start of the stick. The VICTORDATA partition keeps the same start sector,
+length, partition GUID, filesystem UUID and contents. It refuses before writing anything when:
+
+- the new image would reach the data partition (sticks written before `--headroom-mib` existed have no spare room, so a larger image needs a fresh `write`);
+- the stick is a Ventoy layout or 4Kn, or has no VICTORDATA partition;
+- the serial does not match, or the ISO has no matching `.sha256`;
+- the target is the drive the running system booted from (`/run/archiso/bootmnt`, `/run/live/medium`, `/run/initramfs/live`), the system disk, or any other disk refused by `write`.
+
+After the write it reads the image back, re-checks the data partition entry, its UUID and its superblock, and prints recovery hints if anything differs.
+`verify` is read-only: it compares the image area with an ISO, checks the partition entry and label, and runs `e2fsck -n` on VICTORDATA.
+
+Debian edition (Ventoy sticks): `provision-usb.py update --device /dev/sdX --iso NEW.iso --confirm 'UPDATE <identity>'` copies the new ISO and its
+checksum onto the Ventoy partition, verifies the copy, keeps older ISOs for rollback, and never touches the partition table or VICTORDATA.
+`provision-usb.py verify --device /dev/sdX` re-checks every ISO that has a `.sha256` beside it and runs `e2fsck -n` on VICTORDATA.
 
 Safety (unchanged): exact device **and serial** required; identity re-read right before writing; system disk, the workspace disk, mounted devices and non-USB transports refused; ISO `.sha256` verified;
 ISO read back from the device and compared; flush before the table is written; payload re-verified afterwards. `--layout ventoy` still works as before (Ventoy writes a GPT itself); its UEFI
