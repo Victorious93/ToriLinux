@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/victorlinux-banner.png" alt="VictorLinux: Private AI. Boot anywhere." width="100%"></p>
+
 <div align="center">
 
 # VictorLinux
