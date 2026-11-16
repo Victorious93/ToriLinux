@@ -26,16 +26,18 @@ renamed Victorious fork of [sasha0552/ToriLinux](https://github.com/sasha0552/To
 | **Private local AI** | llama.cpp with CPU and Vulkan builds (optional NVIDIA CUDA / HIP), automatic backend, GPU offload and context sizing from the hardware you actually booted |
 | **Models you already have** | GGUF models used **in place** from any drive, including read-only drives and complete split sets; offline model advisor |
 | **Any drive, any size** | Storage chosen by detected capacity and capability. USB, internal SATA/NVMe, external SSD/HDD and SD cards, simultaneously; boot-media preparation for multi-terabyte drives |
-| **Control Center** | Local web UI (dark, rounded, responsive) plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
+| **Control Center** | Local web UI in the VictorLinux palette (#0B0F1A, cyan #00E5FF, magenta #FF2BD6) with a live status dashboard (model, backend, API, storage, RAM/VRAM), keyboard navigation and responsive layout, plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
 | **Fleet** | Coordinate 3–4 phones ([fleet integration](docs/fleet-integration.md)) |
+
+<p align="center"><img src="docs/media/control-center-dashboard.png" alt="Control Center dashboard: status tiles for model, backend, API, storage, RAM and VRAM, rendered by the UI test from the source checkout (no GPU, no root helper)" width="860"></p>
 
 ## Choose an edition
 
 | | Arch edition (repository root) | [Debian edition](debian-edition/README.md) |
 |---|---|---|
 | Desktop | Openbox + local web Control Center | Xfce + Tk Control Center |
-| Appearance | Dark GTK/browser/terminal, rounded responsive web tabs | Dark theme enforced at login, rounded Tk tabs, dark terminal and greeter |
+| Appearance | Brand palette (#0B0F1A / #00E5FF / #FF2BD6) in the web Control Center, Openbox root and Konsole; dark GTK | Same palette in the Tk Control Center (status strip), Xfce desktop, terminal and greeter |
 | Inference | Separate CPU/Vulkan builds; optional NVIDIA CUDA and HIP | CPU + Vulkan; optional NVIDIA driver profile |
 | Launch | `victor-open` | `victor-control` |
 | Multi-drive storage destinations | **Yes** (this page) | Not yet: keeps its own `VICTORDATA` layout |
