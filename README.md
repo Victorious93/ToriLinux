@@ -24,7 +24,7 @@ renamed Victorious fork of [sasha0552/ToriLinux](https://github.com/sasha0552/To
 | | |
 |---|---|
 | **Private local AI** | llama.cpp with CPU and Vulkan builds (optional NVIDIA CUDA / HIP), automatic backend, GPU offload and context sizing from the hardware you actually booted |
-| **Models you already have** | GGUF models used **in place** from any drive, including read-only drives and complete split sets; offline model advisor |
+| **Models you already have** | GGUF models used **in place** from any drive, including read-only drives and complete split sets; offline model advisor; [model library](docs/model-library.md) with background SHA-256 integrity checks, remembered per-model settings and "worked on this PC" history |
 | **Any drive, any size** | Storage chosen by detected capacity and capability. USB, internal SATA/NVMe, external SSD/HDD and SD cards, simultaneously; boot-media preparation for multi-terabyte drives |
 | **Control Center** | Local web UI in the VictorLinux palette (#0B0F1A, cyan #00E5FF, magenta #FF2BD6) with a live status dashboard (model, backend, API, storage, RAM/VRAM), keyboard navigation and responsive layout, plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
