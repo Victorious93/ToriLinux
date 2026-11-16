@@ -139,6 +139,7 @@ Support for exFAT, NTFS, FAT32, Btrfs and XFS relies on the stock kernel and pac
 
 At every model start the PC measures itself: [hardware and model selection](docs/hardware-and-models.md) (memory pools, automatic context, threads, GPU layers, ranked local models, estimates versus verified generation, atomic split-GGUF import).
 Try `victor-hardware`, or *Check this PC & suggest models* in the Control Center. A software Vulkan renderer is reported as CPU fallback; estimates are not promises that a model fits.
+[Storage health and encrypted backups](docs/storage-health-backups.md): free-space and read-only SMART warnings with fixes, passphrase-encrypted backups of settings and chats (secrets only if you opt in), and a verified two-step restore.
 Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a chosen models drive). Downloading models is never automatic.
 
 [Victorious Browser](https://github.com/Victorious93/victorious-browser) (Android) is the phone companion (Tools → VictorLinux PC): see the [companion API](docs/companion-api.md). It is an Android app, not a Linux desktop browser.

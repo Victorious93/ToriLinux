@@ -32,6 +32,7 @@ nftables
 openssh-server
 udisks2
 parted
+smartmontools
 gdisk
 e2fsprogs
 dosfstools

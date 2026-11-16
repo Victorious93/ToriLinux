@@ -106,6 +106,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(await page.locator('#dsDrive option').count(), 5);                     // locked volume is not offered as a destination
   assert.match(await page.locator('#stState').innerText(), /Persistent/);
   console.log('PASS storage tab: multiple drives, destinations, missing drive, FAT32/locked/duplicate flags');
+  // Storage health + encrypted backup round trip (gpg, passphrase never echoed), guided restore with confirmation.
+  await page.locator('[data-t="storage"]').click();
+  await page.click('#bHealth');
+  await page.waitForFunction(() => /VictorLinux data/.test(document.getElementById('hList').textContent));
+  assert.match(await page.locator('#hSum').innerText(), /OK|Warning|Problem|Unknown/);
+  await page.fill('#bkPass', 'short'); await page.fill('#bkPass2', 'short'); await page.click('#bBackup');
+  await page.waitForFunction(() => /at least 10 characters/.test(document.getElementById('toast').textContent));
+  await page.fill('#bkPass', 'blue lantern river 42'); await page.fill('#bkPass2', 'blue lantern river 42'); await page.click('#bBackup');
+  await page.waitForFunction(() => /Encrypted backup saved: .* no secrets/.test(document.getElementById('toast').textContent), null, {timeout: 20000});
+  assert.equal(await page.locator('#bkPass').inputValue(), '');
+  const bk = fs.readdirSync(tmp + '/data/backups').filter(n => n.endsWith('.vlbak'));
+  assert.equal(bk.length, 1);
+  assert.ok(!fs.readFileSync(tmp + '/data/backups/' + bk[0]).includes('ctx'), 'backup must be encrypted');
+  await page.locator('#bkTable input[name="bk"]').first().check();
+  assert.equal(await page.locator('#bkRestoreRow').isVisible(), false);
+  await page.fill('#bkRPass', 'wrong passphrase!'); await page.click('#bInspect');
+  await page.waitForFunction(() => /Wrong passphrase/.test(document.getElementById('bkOut').textContent), null, {timeout: 20000});
+  assert.equal(await page.locator('#bkRestoreRow').isVisible(), false);
+  await page.fill('#bkRPass', 'blue lantern river 42'); await page.click('#bInspect');
+  await page.waitForFunction(() => /Verified: \d+ files/.test(document.getElementById('bkOut').textContent), null, {timeout: 20000});
+  assert.match(await page.locator('#bkOut').innerText(), /config\/settings\.json/);
+  assert.doesNotMatch(await page.locator('#bkOut').innerText(), /secrets\.json/);
+  await page.click('#bRestore');
+  await page.waitForFunction(() => /Tick the box/.test(document.getElementById('toast').textContent));
+  await page.check('#bkSure');
+  page.once('dialog', d => d.accept());
+  await page.click('#bRestore');
+  await page.waitForFunction(() => /Restored \d+ files/.test(document.getElementById('bkOut').textContent), null, {timeout: 20000});
+  if (process.env.VICTOR_SHOTS_DIR) { fs.mkdirSync(process.env.VICTOR_SHOTS_DIR, {recursive: true});
+   await page.screenshot({path: path.join(process.env.VICTOR_SHOTS_DIR, 'storage-health-backups-1366.png'), fullPage: true}); }
+  console.log('PASS storage health, encrypted backup, wrong-passphrase refusal, verified two-step restore');
   // Brand palette: #0B0F1A background, #00E5FF primary accent, #FF2BD6 secondary accent; no light surfaces anywhere.
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 15, 26)');
   assert.equal(await page.locator('#bDs').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 229, 255)');

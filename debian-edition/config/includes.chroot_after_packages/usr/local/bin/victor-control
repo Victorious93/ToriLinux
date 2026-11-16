@@ -6,8 +6,8 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 CTL = "/usr/local/bin/victor-ctl"
 
 
-def ctl(*args, timeout=600):
-    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout)
+def ctl(*args, timeout=600, stdin=None):
+    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout, input=stdin)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.strip() or p.stdout.strip() or f"exit {p.returncode}")
     try:
@@ -444,6 +444,9 @@ class App(tk.Tk):
         b = ttk.Frame(f); b.pack(fill="x")
         for t, fn in (("Rescan", self.scan), ("Use selected partition", self.use_sel), ("Temporary session (RAM only)", self.session)):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        b2 = ttk.Frame(f); b2.pack(fill="x", pady=4)
+        for t, fn in (("Storage health", self.health), ("Back up now...", self.backup), ("Restore...", self.restore)):
+            ttk.Button(b2, text=t, command=fn).pack(side="left", padx=2)
         self.stor_out = self.mkout(f); self.after(1200, self.scan)
 
     def scan(self):
@@ -453,6 +456,42 @@ class App(tk.Tk):
                 self.cand.insert("end", f"UUID {c['uuid']}  {c['size']/2**30:.1f} GiB  {c['model']} {c['serial']} ({c['transport']})")
             self.out(self.stor_out, f"{s['state']}: {s['message']}")
         self.bg(lambda: ctl("storage", "status"), done)
+
+    def health(self):
+        def show(r):
+            lines = [f"Overall: {r['status']}"]
+            lines += [f"{s['label']}: {s['pct_free']}% free ({s['free'] / 2**30:.1f} GiB) {s['fix']}" for s in r["space"]]
+            for d in r["smart"]:
+                lines += [f"{d['device']} {d.get('model', '')}: SMART {d['status']}"] + [f"  - {x['text']} {x['fix']}" for x in d["findings"]]
+            self.out(self.stor_out, "\n".join(lines))
+        self.bg(lambda: ctl("storage", "health", timeout=180), show, "checking drives...")
+
+    def _ask_pass(self, title, confirm=False):
+        from tkinter import simpledialog
+        p = simpledialog.askstring(title, "Backup passphrase (10+ characters):", show="*", parent=self)
+        if not p:
+            return None
+        if confirm and simpledialog.askstring(title, "Repeat the passphrase:", show="*", parent=self) != p:
+            messagebox.showerror(title, "The passphrases do not match."); return None
+        return p
+
+    def backup(self):
+        p = self._ask_pass("Encrypted backup", confirm=True)
+        if not p: return
+        sec = messagebox.askyesno("Encrypted backup", "Also include the API key and TLS keys? (No is safer.)", default="no")
+        args = ["backup", "create"] + (["--include-secrets"] if sec else [])
+        self.bg(lambda: ctl(*args, stdin=p + "\n", timeout=600), lambda r: self.out(self.stor_out, f"Encrypted backup saved: {r['path']} ({r['files']} files)"), "encrypting...")
+
+    def restore(self):
+        f = filedialog.askopenfilename(title="Choose a VictorLinux backup", filetypes=[("VictorLinux backup", "*.vlbak")])
+        if not f: return
+        p = self._ask_pass("Restore backup")
+        if not p: return
+        def checked(r):
+            self.out(self.stor_out, f"Verified backup from {r['created']}:\n" + "\n".join(x["path"] for x in r["files"]))
+            if messagebox.askyesno("Restore backup", f"Verified {len(r['files'])} files. Replace your current settings and chats? Current files are copied to a pre-restore folder first.", default="no"):
+                self.bg(lambda: ctl("backup", "restore", f, "--yes", stdin=p + "\n"), lambda x: self.out(self.stor_out, f"Restored {x['restored']} files. Previous copies: {x['previous_dir']}"), "restoring...")
+        self.bg(lambda: ctl("backup", "inspect", f, stdin=p + "\n"), checked, "verifying...")
 
     def use_sel(self):
         i = self.cand.curselection()
