@@ -7,8 +7,6 @@ endpoint and an honest capability report. It exposes inference ONLY - there is
 no tool execution, file access or shell on this port.
 """
 import argparse
-import hashlib
-import hmac
 import http.client
 import http.server
 import json
@@ -22,6 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import companion  # noqa: E402
+import apikeys  # noqa: E402
 
 OLLAMA_ROUTES = ("/api/version", "/api/tags", "/api/generate", "/api/chat")
 ALLOWED_PREFIXES = ("/v1/", "/completion", "/completions", "/chat/completions", "/models", "/props",
@@ -36,6 +35,23 @@ HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", 
 class State:
     last_request = time.time()
     lock = threading.Lock()
+    sec_lock = threading.Lock()
+    sec_cache = {"mtime": None, "sec": {}}
+    limiter = apikeys.RateLimiter()
+    usage = None
+
+
+def current_secrets():
+    """Re-read secrets.json when it changes, so new, revoked and expired keys apply without a restart."""
+    p = tc.secrets_path()
+    try:
+        m = os.stat(p).st_mtime_ns if p else None
+    except OSError:
+        m = None
+    with State.sec_lock:
+        if m != State.sec_cache["mtime"]:
+            State.sec_cache = {"mtime": m, "sec": tc.load_secrets()}
+        return State.sec_cache["sec"]
 
 
 def capabilities(model_path=None):
@@ -88,24 +104,80 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def send_response(self, code, message=None):
+        self._status = code
+        super().send_response(code, message)
+
     def _authed(self):
+        """-> None when allowed, else a reason: missing | invalid | expired | rate. Keys are stored as sha256 hashes."""
+        self._key = None
         cfg = self.cfg
         if not cfg["require_auth"]:
-            return True
+            return None
         h = self.headers.get("Authorization", "")
-        if h.lower().startswith("bearer "):
-            digest = hashlib.sha256(h[7:].strip().encode()).hexdigest()
-            # stored as sha256 hashes: a leaked config does not reveal usable keys
-            return any(hmac.compare_digest(digest, k) for k in cfg["keys"])
-        return False
+        tok = h[7:].strip() if h.lower().startswith("bearer ") else ""
+        kh, meta, why = apikeys.check(current_secrets(), tok)
+        if why:
+            return why
+        self._key = (apikeys.key_id(kh), meta.get("name"))
+        if not State.limiter.allow(self._key[0], meta.get("rpm") or 0):
+            return "rate"
+        return None
+
+    def _pair(self):
+        """Redeem a single-use pairing token for a named key. Opt-in: only works while the owner's pairing window is open."""
+        if self.command != "POST":
+            return self._json(405, {"v": 1, "ok": False, "err": "bad_request"}, {"Allow": "POST"})
+        if not self.cfg["tls"] and self.cfg["bind"] not in ("127.0.0.1", "::1", "localhost"):
+            return self._json(403, {"v": 1, "ok": False, "err": "tls_required"})
+        n = int(self.headers.get("Content-Length") or 0)
+        if not 0 < n <= 4096:
+            return self._json(400, {"v": 1, "ok": False, "err": "bad_request"})
+        try:
+            b = json.loads(self.rfile.read(n))
+            assert isinstance(b, dict) and b.get("v") == 1
+        except (ValueError, AssertionError):
+            return self._json(400, {"v": 1, "ok": False, "err": "bad_request"})
+        with State.sec_lock:
+            sec = tc.load_secrets()
+            try:
+                key, pub = apikeys.redeem(sec, b.get("t"), b.get("device"))
+                ok = True
+            except apikeys.PairError as e:
+                ok, err = False, str(e)
+            tc.save_secrets(sec)                         # consumed token / attempt counter is persisted either way
+            State.sec_cache["mtime"] = None
+        if State.usage:
+            State.usage.add(pub["id"] if ok else "-", pub["name"] if ok else "pairing", "POST", "/victor/pair", 200 if ok else 403, self.client_address[0])
+        if not ok:
+            return self._json(403, {"v": 1, "ok": False, "err": err})
+        return self._json(200, {"v": 1, "ok": True, "api_key": key, "key_id": pub["id"], "name": pub["name"],
+                                "note": "Store this key in the phone's keystore. It is not shown again."})
 
     def _route(self):
+        self._status, self._key = 0, None
+        try:
+            return self._route_inner()
+        finally:
+            if self._key and State.usage:
+                State.usage.add(self._key[0], self._key[1], self.command, self.path, self._status, self.client_address[0])
+
+    def _route_inner(self):
         path = self.path.split("?", 1)[0]
         if path in ("/victor/health", "/tori/health"):
             up = self._upstream_ok()
             return self._json(200 if up else 503, {"status": "ok" if up else "model_not_running",
                                                    "gateway": "ok", "auth_required": self.cfg["require_auth"]})
-        if not self._authed():
+        if path == "/victor/pair":
+            return self._pair()
+        why = self._authed()
+        if why == "rate":
+            return self._json(429, {"error": {"message": "This key's request limit was reached. Try again in a minute.",
+                                              "type": "rate_limit_error"}}, {"Retry-After": "60"})
+        if why == "expired":
+            return self._json(401, {"error": {"message": "This API key has expired. Create a new one in the VictorLinux Control Center.",
+                                              "type": "authentication_error"}}, {"WWW-Authenticate": 'Bearer realm="victor"'})
+        if why:
             return self._json(401, {"error": {"message": "Missing or invalid API key. Send 'Authorization: Bearer <key>'.",
                                               "type": "authentication_error"}},
                               {"WWW-Authenticate": 'Bearer realm="victor"'})
@@ -336,6 +408,7 @@ def main():
     args = ap.parse_args()
     cfg = build_config(args)
     Handler.cfg = cfg
+    State.usage = apikeys.UsageLog(tc.data_path("logs", "api-usage.jsonl"))
     srv = Server((cfg["bind"], cfg["port"]), Handler)
     if cfg["tls"]:
         cert = args.cert or tc.data_path("server", "tls", "cert.pem")

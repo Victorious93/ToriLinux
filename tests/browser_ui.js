@@ -106,6 +106,40 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(await page.locator('#dsDrive option').count(), 5);                     // locked volume is not offered as a destination
   assert.match(await page.locator('#stState').innerText(), /Persistent/);
   console.log('PASS storage tab: multiple drives, destinations, missing drive, FAT32/locked/duplicate flags');
+  // API keys + opt-in phone pairing: off by default, key shown once, QR carries a single-use token and never an API key.
+  await page.locator('[data-t="remote"]').click();
+  await page.waitForFunction(() => /Pairing is off/.test(document.getElementById('pState').textContent));
+  assert.equal(await page.locator('#pQr svg').count(), 0);
+  await page.click('#bPair');
+  await page.waitForFunction(() => /needs remote access turned on with TLS/.test(document.getElementById('toast').textContent));
+  await page.fill('#kName', 'Laptop'); await page.fill('#kExp', '30'); await page.fill('#kRpm', '60'); await page.click('#bKNew');
+  await page.waitForSelector('#kNewVal');
+  const apiKey = (await page.locator('#kNewVal').innerText()).trim();
+  assert.match(apiKey, /^victor-[A-Za-z0-9_-]{40,}$/);
+  await page.waitForFunction(() => /Laptop/.test(document.getElementById('kTable').textContent) && /60\/min/.test(document.getElementById('kTable').textContent));
+  require('node:child_process').execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+    '-keyout', tmp + '/data/server/tls/key.pem', '-out', tmp + '/data/server/tls/cert.pem', '-days', '2', '-subj', '/CN=victorlinux'],
+    {stdio: 'ignore', env: {...process.env, OPENSSL_CONF: '/dev/null'}, cwd: (fs.mkdirSync(tmp + '/data/server/tls', {recursive: true}), tmp)});
+  assert.equal((await page.evaluate(() => api('/api/remote', {enabled: true, bind: '100.64.0.9', port: 9443, tls: true}))).ok, true);
+  await page.evaluate(() => loadKeys());
+  await page.waitForFunction(() => document.getElementById('pHost').value === '100.64.0.9');
+  await page.click('#bPair');
+  await page.waitForSelector('#pQr svg');
+  const pq = await page.locator('#pQr').innerText();
+  assert.match(pq, /https:\/\/100\.64\.0\.9:9443/);
+  assert.match(pq, /([0-9a-f]{2}:){31}[0-9a-f]{2}/);
+  assert.equal((await page.locator('#pQr').innerHTML()).includes(apiKey), false, 'QR area must never contain an API key');
+  await page.waitForFunction(() => /Pairing window open/.test(document.getElementById('pState').textContent));
+  if (process.env.VICTOR_SHOTS_DIR) { fs.mkdirSync(process.env.VICTOR_SHOTS_DIR, {recursive: true});
+   await page.screenshot({path: path.join(process.env.VICTOR_SHOTS_DIR, 'api-keys-pairing-1366.png'), fullPage: true}); }
+  await page.click('#bPairStop');
+  await page.waitForFunction(() => /Pairing is off/.test(document.getElementById('pState').textContent) && !document.querySelector('#pQr svg'));
+  page.once('dialog', d => d.accept());
+  await page.locator('#kTable [data-krev]').first().click();
+  await page.waitForFunction(() => !/Laptop/.test(document.getElementById('kTable').textContent));
+  assert.equal((await page.evaluate(() => api('/api/remote/revoke', {}))).ok, true);
+  await page.evaluate(() => refresh());
+  console.log('PASS API keys (named, expiry, limit, shown once, revoke) and opt-in phone pairing QR without an API key');
   // Brand palette: #0B0F1A background, #00E5FF primary accent, #FF2BD6 secondary accent; no light surfaces anywhere.
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 15, 26)');
   assert.equal(await page.locator('#bDs').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 229, 255)');

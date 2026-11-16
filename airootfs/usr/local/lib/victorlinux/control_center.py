@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
+import apikeys  # noqa: E402
+import qrsvg  # noqa: E402
+import companion  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
@@ -421,16 +424,77 @@ class App:
     def new_api_key(self):
         key = "victor-" + pysecrets.token_urlsafe(32)
         sec = tc.load_secrets()
-        sec["api_keys"] = [hashlib.sha256(key.encode()).hexdigest()]   # one active key; rotating revokes the old one
+        sec["api_keys"] = [hashlib.sha256(key.encode()).hexdigest()]   # rotate: replaces every key (named ones too)
+        sec["api_key_meta"] = {sec["api_keys"][0]: {"name": "Main key", "created": int(time.time()), "expires": None, "rpm": 0}}
+        apikeys.cancel_pairing(sec)
         tc.save_secrets(sec)
         s = tc.load_settings()
         if self.gw.running():
             self.start_gateway(s)
         return key
 
+    # ------------------------------------------------------ named keys --
+    def usage_path(self):
+        return tc.data_path("logs", "api-usage.jsonl")
+
+    def keys_status(self):
+        sec = tc.load_secrets()
+        up = self.usage_path()
+        use = apikeys.usage_summary(up) if up else {}
+        keys = apikeys.listing(sec)
+        for k in keys:
+            k["usage"] = use.get(k["id"], {"last_24h": 0, "errors_24h": 0, "last": None})
+        r = tc.load_settings()["remote"]
+        cert = tc.data_path("server", "tls", "cert.pem")
+        return {"keys": keys, "recent": apikeys.recent(up, 25) if up else [], "pairing": apikeys.pairing_state(sec),
+                "pair_ready": {"remote": bool(r["enabled"]), "tls": bool(r["tls"]), "cert": bool(cert and os.path.exists(cert)),
+                               "gateway": self.gw.running(), "bind": r["bind"], "port": r["port"]},
+                "lan_discovery": False}
+
+    def keys_action(self, b):
+        act = b.get("action")
+        sec = tc.load_secrets()
+        try:
+            if act == "create":
+                key, pub = apikeys.create(sec, b.get("name"), b.get("expires_days") or 0, b.get("rpm") or 0)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "api_key": key, "key": pub, "message": "Copy this key now. It is shown only once."}
+            if act == "revoke":
+                apikeys.revoke(sec, str(b.get("id", "")))
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "message": "Key revoked. It stops working immediately."}
+            if act == "pair-cancel":
+                apikeys.cancel_pairing(sec)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "message": "Pairing window closed."}
+            if act == "pair-start":
+                st = self.keys_status()["pair_ready"]
+                if not (st["remote"] and st["tls"] and st["cert"]):
+                    return 400, {"error": "Pair phone needs remote access turned on with TLS and a certificate, so the phone can pin this PC. "
+                                          "Set that up above first. Pairing stays off until then."}
+                host = str(b.get("host") or "").strip() or st["bind"]
+                if host in ("0.0.0.0", "::") or not re.fullmatch(r"[A-Za-z0-9.\-:]{1,253}", host):
+                    return 400, {"error": "Enter the address the phone should use (this PC's LAN or VPN IP, or its hostname)."}
+                fp = companion.tls_fingerprint()
+                if not fp:
+                    return 400, {"error": "The TLS certificate could not be read."}
+                pid = apikeys.profile_id(sec)
+                token, exp = apikeys.start_pairing(sec)
+                gw = f"https://{'[' + host + ']' if ':' in host else host}:{st['port']}"
+                uri = apikeys.pair_uri(pid, "VictorLinux " + (os.uname().nodename or "PC")[:40], gw, fp, token, exp)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "uri": uri, "svg": qrsvg.svg(uri), "expires": exp, "gateway": gw, "fingerprint_sha256": fp,
+                             "gateway_running": st["gateway"],
+                             "message": "Scan with the phone within 10 minutes. The QR holds a single-use pairing token, never an API key."}
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        return 400, {"error": "unknown keys action"}
+
     def revoke_remote(self):
         sec = tc.load_secrets()
         sec["api_keys"] = []
+        sec["api_key_meta"] = {}
+        apikeys.cancel_pairing(sec)
         tc.save_secrets(sec)
         s = tc.load_settings()
         s["remote"] = {"enabled": False, "bind": "127.0.0.1", "port": s["remote"]["port"], "tls": False}
@@ -581,6 +645,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 st = APP.fleet(["status"])
                 st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
                 return self._send(200, st)
+            if u.path == "/api/keys":
+                return self._send(200, APP.keys_status())
             if u.path == "/api/diagnostics":
                 return self._send(200, {"text": APP.diagnostics()})
             if u.path == "/api/import/status":
@@ -636,6 +702,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/keys":
+                return self._send(*APP.keys_action(b))
             if p == "/api/fleet/action":
                 return self._send(*APP.fleet_action(b))
             if p == "/api/llm/start":
