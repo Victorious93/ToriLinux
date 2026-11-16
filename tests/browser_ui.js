@@ -1,4 +1,5 @@
-// Real Control Center + Chromium: CSP, unsaved forms, dark appearance and responsive tabs.
+// Real Control Center + Chromium: CSP, unsaved forms, brand palette, status dashboard, keyboard access and responsive tabs.
+// VICTOR_SHOTS_DIR=dir saves per-tab screenshots at 1366 and 390 px.
 // npm install --no-save playwright; npx playwright install chromium; node tests/browser_ui.js
 // PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH selects an already installed Chromium.
 const assert = require('node:assert/strict');
@@ -25,8 +26,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const token = fs.readFileSync(tokenFile, 'utf8').trim();
   browser = await chromium.launch({executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, args: JSON.parse(process.env.PLAYWRIGHT_CHROMIUM_ARGS || "[]")});
   const page = await browser.newPage({colorScheme: 'light', viewport: {width: 1366, height: 900}});
-  const errors = [];
+  const errors = [], foreign = [];
   page.on('pageerror', e => errors.push(e.message));
+  // No external fonts, CDNs or network calls: every request stays on the local Control Center origin.
+  page.on('request', r => { if (!/^(http:\/\/127\.0\.0\.1:18788\/|data:|blob:)/.test(r.url())) foreign.push(r.url()); });
   // The source checkout has no root helper installed: fixture this one read-only response.
   await page.route('**/api/storage', route => route.fulfill({json: {
    state: {mode: 'missing', message: 'No persistent storage selected.'}, partitions: [],
@@ -103,6 +106,59 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(await page.locator('#dsDrive option').count(), 5);                     // locked volume is not offered as a destination
   assert.match(await page.locator('#stState').innerText(), /Persistent/);
   console.log('PASS storage tab: multiple drives, destinations, missing drive, FAT32/locked/duplicate flags');
+  // Brand palette: #0B0F1A background, #00E5FF primary accent, #FF2BD6 secondary accent; no light surfaces anywhere.
+  assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 15, 26)');
+  assert.equal(await page.locator('#bDs').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 229, 255)');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--mag').trim().toLowerCase()), '#ff2bd6');
+  for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
+   await page.locator(`[data-t="${tab}"]`).click();
+   const light = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(el => el.offsetParent !== null || el.tagName === 'HEADER').map(el => {
+     const m = getComputedStyle(el).backgroundColor.match(/[\d.]+/g) || []; const [r, g, b, a = 1] = m.map(Number);
+     return {el: el.tagName + '#' + el.id + '.' + el.className, r, g, b, a}; }).filter(c => c.a > 0.3 && c.r > 200 && c.g > 200 && c.b > 200).map(c => c.el));
+   assert.deepEqual(light, [], `light background on ${tab}`);
+  }
+  console.log('PASS brand palette (#0B0F1A / #00E5FF / #FF2BD6), no light backgrounds on any tab');
+  // Status dashboard: six live tiles (model, backend, API + bind, storage + drives, RAM, VRAM), no loading placeholders left.
+  await page.locator('[data-t="dash"]').click();
+  await page.evaluate(() => refresh());
+  await page.waitForFunction(() => !document.querySelector('#tiles .skel'));
+  assert.equal(await page.locator('#tiles .tile').count(), 6);
+  for (const id of ['k-model', 'k-backend', 'k-api', 'k-storage', 'k-ram', 'k-vram'])
+   assert.ok((await page.locator(`#${id} .v`).innerText()).trim().length > 0, id + ' empty');
+  assert.match(await page.locator('#k-api .sub').innerText(), /127\.0\.0\.1:\d+ · local only/);
+  assert.match(await page.locator('#k-storage .sub').innerText(), /6 drives · 3 destinations/);
+  assert.match(await page.locator('#k-backend .v').innerText(), /^(CPU|Vulkan|CUDA|HIP|None)$/);
+  assert.match(await page.locator('#upd').innerText(), /updated/);
+  console.log('PASS status dashboard tiles: model, backend, API bind, storage drives, RAM, VRAM');
+  // Keyboard: roving tabindex, arrows/Home/End switch tabs, visible cyan focus ring.
+  await page.locator('#tab-dash').focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-models');
+  assert.equal(await page.locator('#t-models').isVisible(), true);
+  await page.keyboard.press('End'); assert.equal(await page.locator('#t-logs').isVisible(), true);
+  await page.keyboard.press('Home'); assert.equal(await page.locator('#t-dash').isVisible(), true);
+  assert.equal(await page.locator('#nav button[tabindex="0"]').count(), 1);
+  assert.equal(await page.evaluate(() => getComputedStyle(document.activeElement).outlineColor), 'rgb(0, 229, 255)');
+  console.log('PASS keyboard tab navigation and focus ring');
+  // Error state: a failed status request shows a banner with Retry; Retry recovers.
+  await page.route('**/api/status', route => route.abort());
+  await page.evaluate(() => refresh());
+  await page.waitForSelector('#connErr');
+  assert.equal(await page.locator('#upd').innerText(), 'offline');
+  await page.unroute('**/api/status');
+  await page.click('#bRetry');
+  await page.waitForFunction(() => !document.querySelector('#connErr') && /updated/.test(document.querySelector('#upd').textContent));
+  console.log('PASS connection error banner and retry');
+  if (process.env.VICTOR_SHOTS_DIR) {
+   fs.mkdirSync(process.env.VICTOR_SHOTS_DIR, {recursive: true});
+   for (const [width, height] of [[1366, 900], [390, 844]]) {
+    await page.setViewportSize({width, height});
+    for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
+     await page.locator(`[data-t="${tab}"]`).click(); await sleep(250);
+     await page.screenshot({path: path.join(process.env.VICTOR_SHOTS_DIR, `control-center-${tab}-${width}.png`), fullPage: true});
+    }
+   }
+  }
   if (process.env.VICTOR_STORAGE_SCREENSHOT) {
    await page.setViewportSize({width: 1366, height: 1100});
    await page.screenshot({path: process.env.VICTOR_STORAGE_SCREENSHOT, fullPage: true});
@@ -123,6 +179,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.evaluate(() => { sessionStorage.tab = 'obsolete-tab'; });
   await page.reload(); await page.waitForSelector('#t-dash.on');
   assert.deepEqual(errors, []);
+  assert.deepEqual(foreign, [], 'external network requests');
   if (process.env.VICTOR_UI_SCREENSHOT) {
    await page.setViewportSize({width: 1366, height: 900});
    await page.screenshot({path: process.env.VICTOR_UI_SCREENSHOT, fullPage: true});
