@@ -4,6 +4,7 @@ import argparse, json, os, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
 from victorlib import hw, storage, models, llama, api, bench, kali, diag
+from victorlib import docchat
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -20,6 +21,65 @@ def out(a, obj):
         print(json.dumps(obj, indent=2, default=str))
     else:
         print(obj)
+
+
+def _doc_index():
+    return docchat.Index(data_path("docindex", "index.sqlite"))
+
+
+def _doc_private():
+    home = os.path.expanduser("~")
+    return [data_path("secrets"), data_path("settings"), data_path("docindex"), os.path.join(home, ".ssh"), os.path.join(home, ".gnupg")]
+
+
+def _doc_llm():
+    """Loopback URL + key of the running llama-server, or (None, None). Never a remote host."""
+    import ipaddress
+    c = llama.load_config()
+    if not llama.is_running() or not ipaddress.ip_address(c["bind"]).is_loopback:
+        return None, None
+    key = None
+    if os.path.exists(llama.key_path()):
+        with open(llama.key_path()) as f:
+            key = f.read().strip() or None
+    return f"http://127.0.0.1:{int(c['port'])}", key
+
+
+def _doc_embedder():
+    url, key = _doc_llm()
+    if not url:
+        return None
+    e = docchat.Embedder(url, key, timeout=30)
+    try:
+        e.embed(["probe"])
+        return e
+    except (OSError, ValueError):
+        return None
+
+
+def docs_cmd(a):
+    idx = _doc_index()
+    if a.cmd == "list":
+        return {"sources": idx.sources(), "stats": idx.stats()}
+    if a.cmd == "add":
+        try:
+            return {"added": idx.add_source(a.path, _doc_private())}
+        except docchat.DocError as e:
+            raise VictorError(str(e))
+    if a.cmd == "remove":
+        return {"removed_files": idx.remove_source(os.path.realpath(a.path)), "note": "Your files were not touched."}
+    if a.cmd == "index":
+        emb = _doc_embedder()
+        return idx.build(emb, llama.load_config().get("model") if emb else None, exclude=_doc_private()) | {"semantic": bool(emb)}
+    hits = idx.search(a.question, k=a.k, embedder=_doc_embedder())
+    res = {"hits": [{"path": h["path"], "text": h["text"][:900], "score": h["score"], "mode": h["mode"]} for h in hits]}
+    if a.cmd == "ask" and hits:
+        url, key = _doc_llm()
+        if url:
+            res["answer"] = docchat.answer(a.question, hits, url, key)
+        else:
+            res["message"] = "Start the model (bound to 127.0.0.1) for a written answer; matching passages are shown."
+    return res
 
 
 def main():
@@ -49,6 +109,10 @@ def main():
     ka["start"].add_argument("--cap", action="append", default=[]); ka["download"].add_argument("--yes", action="store_true")
     ka["load-pack"].add_argument("tar")
     g("diag", "show", "save-log")
+    dc = g("docs", "list", "add", "remove", "index", "search", "ask")
+    dc["add"].add_argument("path"); dc["remove"].add_argument("path")
+    for n in ("search", "ask"):
+        dc[n].add_argument("question"); dc[n].add_argument("-k", type=int, default=6, choices=range(1, 13), metavar="1-12")
     g("versions", "show")
     a = ap.parse_args()
     try:
@@ -119,6 +183,8 @@ def main():
             else: out(a, kali.load_pack(a.tar))
         elif a.grp == "diag":
             out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
+        elif a.grp == "docs":
+            out(a, docs_cmd(a))
         elif a.grp == "versions":
             out(a, diag.collect()["image_facts"] | diag.collect()["llama_build"])
     except VictorError as e:

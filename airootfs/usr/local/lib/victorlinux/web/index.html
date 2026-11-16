@@ -28,7 +28,9 @@ main{min-width:0}section{display:none}section.on{display:block;animation:appear 
 button.b{display:inline-flex;align-items:center;gap:8px;background:var(--cyan);color:var(--on-acc);border:1px solid transparent;padding:9px 16px;border-radius:14px;cursor:pointer;font:700 13px system-ui,sans-serif;min-height:40px;transition:filter .15s,transform .15s,border-color .15s,background .15s}button.b:hover{filter:brightness(1.1)}button.b:active{transform:translateY(1px)}
 button.b.s{background:var(--s2);color:var(--fg);border-color:var(--bd2)}button.b.s:hover{border-color:var(--cyan);filter:none}button.b.d{background:#2a1222;color:#ff9db1;border-color:#6e2c46}button.b.d:hover{border-color:var(--bad);filter:none}
 button:disabled{opacity:.45;cursor:not-allowed}button.busy{position:relative;color:transparent!important}button.busy::after{content:"";position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;border:2px solid var(--fg);border-top-color:transparent;animation:spin .7s linear infinite}button.b:not(.s):not(.d).busy::after{border-color:var(--on-acc);border-top-color:transparent}@keyframes spin{to{transform:rotate(360deg)}}
-input,select{background:var(--bg);color:var(--fg);border:1px solid var(--bd2);border-radius:12px;padding:9px 12px;max-width:100%;min-height:40px;font:inherit}input::placeholder{color:#7d8aa6}input:hover,select:hover{border-color:#46557f}input[type=checkbox]{min-height:0;width:16px;height:16px;accent-color:var(--cyan);vertical-align:-3px}
+[hidden]{display:none!important}
+textarea{width:100%;resize:vertical;margin:6px 0 10px}#dSrc{min-width:420px}.hit{background:var(--s2);border:1px solid var(--bd);border-radius:14px;padding:10px 12px;margin:8px 0}.hit summary{cursor:pointer}.answer{border-color:var(--cyan)}.ans{max-height:none;font-size:14px;color:var(--fg)}
+input,textarea,select{background:var(--bg);color:var(--fg);border:1px solid var(--bd2);border-radius:12px;padding:9px 12px;max-width:100%;min-height:40px;font:inherit}input::placeholder,textarea::placeholder{color:#7d8aa6}input:hover,select:hover{border-color:#46557f}input[type=checkbox]{min-height:0;width:16px;height:16px;accent-color:var(--cyan);vertical-align:-3px}
 :focus-visible{outline:none}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;box-shadow:0 0 0 5px #00e5ff2e}
 a{color:var(--cyan)}a:hover{color:var(--mag)}label{display:block;margin:12px 0 5px;color:var(--mut);font-size:12px;font-weight:600}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}.row>div{max-width:100%}
 .bar{height:8px;background:var(--bg);border:1px solid var(--bd);border-radius:99px;overflow:hidden;margin:8px 0 16px}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--mag));border-radius:99px;transition:width .4s}
@@ -56,6 +58,7 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:14px 24px 28px;
 <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
 <symbol id="i-mem" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7v10M11 7v10M15 7v10M6 17v3M18 17v3"/></symbol>
 <symbol id="i-api" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h6"/></symbol>
 <symbol id="i-fleet" viewBox="0 0 24 24"><rect x="3" y="5" width="7" height="13" rx="1.5"/><rect x="14" y="5" width="7" height="13" rx="1.5"/><path d="M6 15h1M17 15h1"/></symbol>
 </defs></svg>
 <a class="skip" href="#main">Skip to content</a>
@@ -105,6 +108,19 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:14px 24px 28px;
   <div class="row"><button class="b" id="bImp">Validate &amp; import</button></div><div id="impSt"></div></div>
  <div class="card"><h2>Model directories</h2><div id="dirs" class="mut"></div>
   <div class="row"><input id="dAdd" placeholder="/mnt/victor-ro/<uuid>/models" style="flex:1"><button class="b s" id="bDir">Add directory</button></div></div>
+</section>
+<section id="t-docs">
+ <div class="card"><h2><svg><use href="#i-doc"/></svg>Ask your documents</h2><p class="mut">Answers come from your own files and the model running on this PC. Nothing is uploaded and there is no cloud fallback.</p>
+  <label for="dQ">Question</label><textarea id="dQ" rows="3" maxlength="2000" placeholder="What does my lease say about pets?"></textarea>
+  <div class="row"><button class="b" id="bAsk">Ask</button><button class="b s" id="bDocSearch">Search only</button><span class="mut" id="dMode"></span></div>
+  <div id="dAnswer" aria-live="polite"></div><div id="dHits"></div></div>
+ <div class="card"><h2>Folders to read</h2><p class="mut">Only folders you add here are read. System folders and VictorLinux secrets are refused; hidden folders and symlinks are skipped. Removing a folder deletes it from the index, never from disk.</p>
+  <div class="row"><input id="dPath" placeholder="/home/victor/Documents" style="flex:1;min-width:220px" aria-label="Folder or file path"><button class="b" id="bDocAdd">Add folder</button></div>
+  <div class="table-wrap"><table id="dSrc"></table></div>
+  <div class="row"><button class="b" id="bDocIndex">Index now</button><button class="b s" id="bDocCancel" hidden>Cancel</button><span class="mut" id="dJob"></span></div>
+  <p class="mut" id="dStats"></p></div>
+ <div class="card"><h2>Meaning search (optional)</h2><p class="mut">Keyword search always works. For search by meaning, pick an embedding GGUF from your model folders; VictorLinux runs it with llama-server on 127.0.0.1 only. Without one, the chat model is used if it serves embeddings.</p>
+  <div class="row"><select id="dEmb" aria-label="Embedding model" style="flex:1;min-width:220px"></select><button class="b s" id="bDocEmb">Save</button></div><p class="mut" id="dEmbState"></p></div>
 </section>
 <section id="t-storage">
  <div class="card"><h2><svg><use href="#i-disk"/></svg>Where your files go</h2><div id="stState"></div>
@@ -161,9 +177,9 @@ async function api(p,body){try{const r=await fetch(p,{method:body===undefined?"G
 function toast(m,k){const d=document.createElement("div");d.className="banner "+(k||"ok");d.textContent=m;$("toast").appendChild(d);setTimeout(()=>d.remove(),k==="bad"?12000:5000)}
 function res(j,okm){if(j&&(j.ok===false||j.error)){toast(j.error||"failed","bad");return false}toast(okm||j.message||"Done");return true}
 const G=n=>n==null?"?":(n/2**30).toFixed(1)+" GiB";
-const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["storage","disk","Storage"],["remote","net","Server & Access"],["fleet","fleet","Fleet"],["logs","log","Logs & Diagnostics"]];
+const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["docs","doc","Documents"],["storage","disk","Storage"],["remote","net","Server & Access"],["fleet","fleet","Fleet"],["logs","log","Logs & Diagnostics"]];
 $("nav").innerHTML=tabs.map(t=>`<button role="tab" id="tab-${t[0]}" aria-controls="t-${t[0]}" data-t="${t[0]}" tabindex="-1"><svg><use href="#i-${t[1]}"/></svg>${t[2]}</button>`).join("");
-function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on));b.tabIndex=on?0:-1});sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="fleet")loadFleet();if(t==="logs")loadLog()}
+function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on));b.tabIndex=on?0:-1});sessionStorage.tab=t;if(t==="storage")loadStorage();if(t==="fleet")loadFleet();if(t==="logs")loadLog();if(t==="docs")loadDocs()}
 async function fleetAct(cmd,arg){const j=await api("/api/fleet/action",{cmd,arg});if(j.error){toast(j.error,"bad");return}if(cmd==="pair"){$("fOut").textContent="PAIRING (single use, expires in "+j.expires_in_s+"s)\nCoordinator: "+j.coordinator_url+"\nVerify this fingerprint matches the phone's screen BEFORE approving:\n  "+j.coordinator_fingerprint_sha256+"\nPairing secret (type it on the phone):\n  "+j.pairing_secret}else if(cmd==="review"||cmd==="report"){$("fOut").textContent=JSON.stringify(j,null,2)}else{toast(j.message||"Done")}loadFleet(cmd==="pair"||cmd==="review"||cmd==="report")}
 async function loadFleet(keep){const s=await api("/api/fleet");if(s.error){$("fOut").textContent=s.error;return}
  if(!keep)$("fOut").textContent=s.running?("running on "+s.bind+(s.network_enabled?"":" (local-only)")+"\nfingerprint sha256:"+s.fingerprint_sha256+"\njobs: "+JSON.stringify(s.job_counts)+(s.durability_warning?"\nWARNING: "+s.durability_warning:"")):"Coordinator is stopped."+(s.persistence&&!s.persistence.durable?"\nWARNING: state would NOT be durable: "+s.persistence.reason:"");
@@ -270,7 +286,7 @@ $("bTls").onclick=async()=>{res(await api("/api/remote/tls-cert",{host:$("tlsHos
 $("bCap").onclick=async()=>{$("capOut").style.display="block";$("capOut").textContent="Running real requests against the loaded model…";const j=await api("/api/capcheck",{});$("capOut").textContent=j.output||j.error};
 const ssh=a=>async()=>{if(res(await api("/api/ssh",{action:a,key:$("sshKey").value,listen:$("sshListen").value})))refresh()};
 $("bSshAdd").onclick=ssh("add-key");$("bSshOn").onclick=ssh("enable");$("bSshOff").onclick=ssh("disable");$("bSshReset").onclick=ssh("reset");
-async function loadLog(){const sel=$("lSel");if(!sel.options.length)sel.innerHTML=["llama","gateway","comfyui","automatic","sillytavern"].map(x=>`<option>${x}</option>`).join("");const j=await api("/api/logs?name="+sel.value);$("logOut").textContent=j.log||j.error||"(empty)"}
+async function loadLog(){const sel=$("lSel");if(!sel.options.length)sel.innerHTML=["llama","gateway","embed","comfyui","automatic","sillytavern"].map(x=>`<option>${x}</option>`).join("");const j=await api("/api/logs?name="+sel.value);$("logOut").textContent=j.log||j.error||"(empty)"}
 $("bLog").onclick=loadLog;$("lSel").onchange=loadLog;
 $("bDiag").onclick=async()=>{const j=await api("/api/diagnostics");$("diagOut").textContent=j.text||j.error};
 $("bCopy").onclick=async()=>{try{await navigator.clipboard.writeText($("diagOut").textContent);toast("Copied")}catch(e){toast("Copy failed; select the text manually","warn")}};
@@ -279,10 +295,30 @@ $("bAdvice").onclick=async()=>{$("bAdvice").disabled=true;$("advice").textConten
 $("advice").innerHTML=`<p><b>${esc(j.cpu.name)}</b> · ${j.cpu.threads} logical CPUs · ${G(j.ram.available)} RAM available</p><p class="mut">Memory pool: ${esc(h.memory_kind||"?")}${h.device?" · "+esc(h.device):""} · planning budget ${G(h.budget||0)} · default threads ${h.threads_default||"?"}</p>`+(h.notes||[]).map(n=>`<p class="mut">${esc(n)}</p>`).join("")+
 (j.local&&j.local.length?`<h3>Your models, ranked for this PC</h3><p class="mut">${esc(j.local_note)}</p>`+j.local.map(m=>{const v=vt[m.verified]||vt.untested;return `<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="fits"?"ok":"warn"}">${esc(m.fit)}</span> <span class="pill ${v[0]}">${esc(v[1])}</span><p class="mut">${m.ctx?`~${G(m.estimated_total)} at ${m.ctx} context · `:""}${esc(m.reason)}</p></div>`}).join(""):"")+
 `<h3>Optional catalog (not downloaded)</h3><p class="mut">${esc(j.note)}</p>`+j.models.map(m=>`<div class="model-choice"><b>${esc(m.name)}</b> <span class="pill ${m.fit==="recommended"?"ok":"warn"}">${esc(m.fit)}</span><p class="mut">~${G(m.estimated_total)} at ${m.context} context · ${esc(m.reason)}</p><a href="${esc(m.source)}" target="_blank" rel="noreferrer">Official model card ↗</a></div>`).join("")};
+// Documents: user-chosen folders only, local index, local model.
+let docPoll=null;
+async function loadDocs(){const j=await api("/api/docs");if(j.error){$("dStats").textContent=j.error;$("dSrc").innerHTML="";return}
+$("dSrc").innerHTML=j.sources.length?"<tr><th>Folder</th><th>Files</th><th>Passages</th><th></th></tr>"+j.sources.map(s=>`<tr><td><code>${esc(s.path)}</code>${s.exists?"":' <span class="pill warn">missing</span>'}</td><td>${s.files}</td><td>${s.chunks}</td><td><button class="b s" data-docrm="${esc(s.path)}">Remove</button></td></tr>`).join(""):'<tr><td class="mut">No folders yet. Add one above.</td></tr>';
+const st=j.stats;$("dStats").textContent=`${st.files} files · ${st.chunks} passages · ${st.embedded} with meaning vectors${st.embed_model?" ("+st.embed_model+")":""}${j.pdf?"":" · PDF needs pdftotext (poppler)"}`;
+const jb=j.job||{},pr=jb.progress||{};const run=jb.state==="running";$("bDocCancel").hidden=!run;$("bDocIndex").disabled=run;
+$("dJob").textContent=run?`Indexing… ${pr.scanned||0} scanned, ${pr.indexed||0} new or changed`:jb.state==="done"?`Indexed: ${jb.result.indexed} new or changed, ${jb.result.skipped} unchanged, ${jb.result.removed} removed${jb.semantic?" · meaning search on":" · keyword only"}${jb.result.embed_error?" · "+jb.result.embed_error:""}${jb.embed_error?" · "+jb.embed_error:""}`:jb.state==="error"?jb.error:jb.state==="cancelled"?"Cancelled.":"";
+if(run&&!docPoll)docPoll=setInterval(loadDocs,1500);if(!run&&docPoll){clearInterval(docPoll);docPoll=null}
+const m=await api("/api/models");const cur=j.embed.model;$("dEmb").innerHTML=`<option value="">(none: keyword search, or chat model embeddings)</option>`+(m.models||[]).map(x=>`<option value="${esc(x.path)}" ${x.path===cur?"selected":""}>${esc(x.name)}</option>`).join("");
+$("dEmbState").textContent=cur?(j.embed.running?"Embedding server running on 127.0.0.1.":"Starts on 127.0.0.1 when you index."):"No embedding model chosen.";
+$("dMode").textContent=j.llm_running?"Model running: answers are written by it.":"No model running: you get matching passages only."}
+function showDocs(j){$("dAnswer").innerHTML=j.answer?`<div class="card answer"><pre class="ans">${esc(j.answer)}</pre></div>`:(j.message?`<div class="banner warn"><span>${esc(j.message)}</span></div>`:"");
+$("dHits").innerHTML=(j.hits||[]).map((x,i)=>`<details class="hit"${i<2?" open":""}><summary><b>[${i+1}]</b> ${esc(x.name)} <span class="pill">${esc(x.mode)}</span></summary><p class="mut"><code>${esc(x.path)}</code></p><pre>${esc(x.text)}</pre></details>`).join("")}
+$("bAsk").onclick=async()=>{$("dAnswer").innerHTML='<p class="mut">Thinking on this PC…</p>';const j=await api("/api/docs",{action:"ask",question:$("dQ").value});if(j.error){$("dAnswer").innerHTML="";toast(j.error,"bad");return}showDocs(j)};
+$("bDocSearch").onclick=async()=>{const j=await api("/api/docs",{action:"search",question:$("dQ").value});if(j.error){toast(j.error,"bad");return}showDocs(j)};
+$("bDocAdd").onclick=async()=>{if(res(await api("/api/docs",{action:"add",path:$("dPath").value}))){$("dPath").value="";loadDocs()}};
+$("bDocIndex").onclick=async()=>{if(res(await api("/api/docs",{action:"index"}),"Indexing started"))loadDocs()};
+$("bDocCancel").onclick=async()=>{await api("/api/docs",{action:"cancel"});loadDocs()};
+$("bDocEmb").onclick=async()=>{if(res(await api("/api/docs",{action:"set-embed",model:$("dEmb").value})))loadDocs()};
+$("dSrc").onclick=async e=>{const b=e.target.closest("[data-docrm]");if(b&&confirm("Remove this folder from the index? Your files stay where they are."))busy(b,async()=>{res(await api("/api/docs",{action:"remove",path:b.dataset.docrm}));loadDocs()})};
 document.querySelectorAll("label").forEach(label=>{const next=label.nextElementSibling;if(next&&next.id&&["INPUT","SELECT"].includes(next.tagName))label.htmlFor=next.id});
 // Loading state: every action button shows a spinner and is disabled until its request finishes.
 async function busy(btn,fn){if(btn.classList.contains("busy"))return;btn.classList.add("busy");btn.setAttribute("aria-busy","true");btn.disabled=true;try{return await fn()}finally{btn.classList.remove("busy");btn.removeAttribute("aria-busy");btn.disabled=false;if(S){$("bStart").disabled=S.llm.running;$("bStop").disabled=!S.llm.running&&!S.gateway.running}}}
-for(const id of ["bStart","bStop","bSave","bEst","bImp","bDir","bDs","bTemp","bRem","bKey","bRev","bTls","bCap","bSshAdd","bSshOn","bSshOff","bSshReset","bLog","bDiag","bAdvice","bReboot","bOff"]){const el=$(id),f=el.onclick;if(f)el.onclick=e=>busy(el,()=>f.call(el,e))}
+for(const id of ["bStart","bStop","bSave","bEst","bImp","bDir","bDs","bTemp","bRem","bKey","bRev","bTls","bCap","bSshAdd","bSshOn","bSshOff","bSshReset","bLog","bDiag","bAdvice","bReboot","bOff","bAsk","bDocSearch","bDocAdd","bDocIndex","bDocEmb"]){const el=$(id),f=el.onclick;if(f)el.onclick=e=>busy(el,()=>f.call(el,e))}
 document.addEventListener("click",e=>{if(e.target.closest("#bRetry"))busy(e.target.closest("#bRetry"),refresh)});
 show(sessionStorage.tab||"dash");refresh();loadStorage();setInterval(refresh,4000);
 </script></body></html>
