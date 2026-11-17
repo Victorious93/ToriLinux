@@ -22,18 +22,17 @@ import urllib.parse
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import apikeys
-
 PROTOCOL_VERSION = 1
 DEFAULT_PORT = 8473
 ADMIN_PORT = 8472
-PAIR_TTL = apikeys.PAIR_TTL
-PAIR_MAX_ATTEMPTS = apikeys.PAIR_MAX_ATTEMPTS
+PAIR_TTL = 600
+PAIR_MAX_ATTEMPTS = 3
 TS_SKEW_MS = 30_000
 NONCE_CACHE = 2048
 RATE_PER_SEC = 250
 MSG_MAX = 4096
-NAME_RE = apikeys.NAME_RE
+NAME_RE = re.compile(r"^[\w .:@()-]{1,48}$")
+B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 TOKEN_PREFIX = "victor-input-"
 
 # linux/input-event-codes.h (subset used for US keyboard + relative mouse)
@@ -82,6 +81,33 @@ class AuthError(ProtocolError):
     pass
 
 
+
+class PairError(Exception):
+    pass
+
+
+def sha(s):
+    return hashlib.sha256(s.encode()).hexdigest()
+
+
+def b64url(b):
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+def key_id(h):
+    return h[:12]
+
+
+def fingerprint_b64(der_sha256_hex):
+    """Certificate SHA-256 in the v1 host-key style: 'SHA256:' + standard base64 without padding."""
+    return "SHA256:" + base64.b64encode(bytes.fromhex(der_sha256_hex)).decode().rstrip("=")
+
+
+def profile_id(sec):
+    if not re.fullmatch(f"[{B32}]{{12}}", sec.get("pair_profile_id") or ""):
+        sec["pair_profile_id"] = "".join(pysecrets.choice(B32) for _ in range(12))
+    return sec["pair_profile_id"]
+
 # -------------------------------------------------------------------------------- pairing --
 def pair_uri(pid, name, ws_url, cert_sha256_hex, token, expires):
     """victorpc://pair v1 encodings with additive input keys `iw` (wss URL) and `ifp` (TLS fingerprint).
@@ -92,26 +118,45 @@ def pair_uri(pid, name, ws_url, cert_sha256_hex, token, expires):
         raise ValueError("Pairing needs the input service on WSS with a reachable address.")
     fields = [
         ("v", "1"), ("id", pid), ("n", name[:64]),
-        ("iw", ws_url), ("ifp", apikeys.fingerprint_b64(cert_sha256_hex)),
+        ("iw", ws_url), ("ifp", fingerprint_b64(cert_sha256_hex)),
         ("t", token), ("x", str(int(expires))),
     ]
     return "victorpc://pair?" + "&".join(f"{k}={urllib.parse.quote(v, safe=':/[]')}" for k, v in fields)
 
 
 def parse_uri(uri):
-    return apikeys.parse_uri(uri)
+    """Strict parser: duplicate keys refused, unknown keys ignored, '+' is not a space."""
+    u = urllib.parse.urlsplit(uri)
+    if u.scheme != "victorpc" or u.netloc != "pair":
+        raise ValueError("not a victorpc://pair URI")
+    out = {}
+    for part in u.query.split("&"):
+        k, _, v = part.partition("=")
+        if k in out:
+            raise ValueError("duplicate key " + k)
+        out[k] = urllib.parse.unquote(v)
+    if out.get("v") != "1":
+        raise ValueError("unsupported version")
+    return out
 
 
 def start_pairing(sec, now=None, ttl=PAIR_TTL):
-    return apikeys.start_pairing(sec, now=now, ttl=ttl)
+    now = int(now or time.time())
+    raw = pysecrets.token_bytes(16)
+    token = b64url(raw)
+    sec["pairing"] = {"hash": sha(token), "expires": now + ttl, "attempts": 0}
+    return token, now + ttl
 
 
 def cancel_pairing(sec):
-    apikeys.cancel_pairing(sec)
+    sec.pop("pairing", None)
 
 
 def pairing_state(sec, now=None):
-    return apikeys.pairing_state(sec, now=now)
+    p = sec.get("pairing")
+    if not p or (now or time.time()) >= p.get("expires", 0) or p.get("attempts", 0) >= PAIR_MAX_ATTEMPTS:
+        return {"active": False}
+    return {"active": True, "expires": p["expires"]}
 
 
 def _devices(sec):
@@ -124,13 +169,13 @@ def create_device(sec, name, now=None):
         raise ValueError("Device name: up to 48 letters, digits, spaces and . : @ ( ) - _")
     now = now or time.time()
     token = TOKEN_PREFIX + pysecrets.token_urlsafe(32)
-    h = apikeys.sha(token)
+    h = sha(token)
     _devices(sec)[h] = {"name": name, "created": int(now), "revoked": False}
     return token, public_device(h, _devices(sec)[h])
 
 
 def public_device(h, meta):
-    return {"id": apikeys.key_id(h), "name": meta.get("name"), "created": meta.get("created")}
+    return {"id": key_id(h), "name": meta.get("name"), "created": meta.get("created")}
 
 
 def listing(sec):
@@ -138,7 +183,7 @@ def listing(sec):
 
 
 def revoke(sec, kid):
-    hit = [h for h, m in _devices(sec).items() if apikeys.key_id(h) == kid and not m.get("revoked")]
+    hit = [h for h, m in _devices(sec).items() if key_id(h) == kid and not m.get("revoked")]
     if not hit:
         raise ValueError("No such device.")
     for h in hit:
@@ -150,7 +195,7 @@ def check_token(sec, presented):
     """-> (hash, meta, None) or (None, None, reason). Constant-time against every stored hash."""
     if not presented:
         return None, None, "missing"
-    d = apikeys.sha(presented)
+    d = sha(presented)
     match = None
     for h, m in _devices(sec).items():
         if hmac.compare_digest(d, h):
@@ -168,18 +213,18 @@ def redeem(sec, token, device, now=None):
     now = now or time.time()
     p = sec.get("pairing")
     if not p:
-        raise apikeys.PairError("none")
+        raise PairError("none")
     if now >= p.get("expires", 0):
         cancel_pairing(sec)
-        raise apikeys.PairError("expired")
+        raise PairError("expired")
     if p.get("attempts", 0) >= PAIR_MAX_ATTEMPTS:
         cancel_pairing(sec)
-        raise apikeys.PairError("too_many_attempts")
-    if not isinstance(token, str) or not hmac.compare_digest(apikeys.sha(token), p["hash"]):
+        raise PairError("too_many_attempts")
+    if not isinstance(token, str) or not hmac.compare_digest(sha(token), p["hash"]):
         p["attempts"] = p.get("attempts", 0) + 1
         if p["attempts"] >= PAIR_MAX_ATTEMPTS:
             cancel_pairing(sec)
-        raise apikeys.PairError("bad_token")
+        raise PairError("bad_token")
     cancel_pairing(sec)
     dev = re.sub(r"[^\w .:@()-]", "", str(device or "Phone"))[:40].strip() or "Phone"
     return create_device(sec, "Phone: " + dev, now=now)
@@ -565,7 +610,7 @@ class InputSession:
             h, meta, err = check_token(self.sec, msg["token"])
             if err:
                 raise AuthError("unauthorized", err)
-            return {"v": 1, "type": "ok", "device_id": apikeys.key_id(h), "name": meta.get("name")}
+            return {"v": 1, "type": "ok", "device_id": key_id(h), "name": meta.get("name")}
         if not device_id:
             raise AuthError("unauthorized", "missing token")
         if not self.replay.check(device_id, msg["n"]):
@@ -626,7 +671,7 @@ class InputApp:
         cert, _key, fp = ensure_tls(self.root)
         self.cert, self.tls_fp = cert, fp
         token, exp = start_pairing(self.sec, now=now)
-        pid = apikeys.profile_id(self.sec)
+        pid = profile_id(self.sec)
         host_url = host if ":" not in host or host.startswith("[") else f"[{host}]"
         if ":" in host and not host.startswith("["):
             host_url = f"[{host}]"
@@ -649,7 +694,7 @@ class InputApp:
             return 400, {"v": 1, "ok": False, "err": "bad_message"}
         try:
             token, pub = redeem(self.sec, body.get("t"), body.get("device"))
-        except apikeys.PairError as e:
+        except PairError as e:
             save_secrets(self.sec, self.root)
             return 403, {"v": 1, "ok": False, "err": e.args[0]}
         save_secrets(self.sec, self.root)
@@ -770,7 +815,7 @@ def _make_public_handler(app):
                 if err:
                     ws_send(sock, json.dumps({"v": 1, "type": "error", "err": "unauthorized"}))
                     return
-                device_id = apikeys.key_id(h)
+                device_id = key_id(h)
                 ws_send(sock, json.dumps({"v": 1, "type": "ok", "device_id": device_id}))
             try:
                 while True:

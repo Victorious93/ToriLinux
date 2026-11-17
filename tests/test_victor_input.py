@@ -4,7 +4,6 @@ import time
 
 import pytest
 
-import apikeys
 import victorinput as vi
 
 
@@ -20,7 +19,7 @@ def test_default_is_off():
 def test_pair_uri_v1_encodings_and_no_token():
     sec = {}
     tok, exp = vi.start_pairing(sec, now=1000)
-    uri = vi.pair_uri(apikeys.profile_id(sec), "Don's PC+1", "wss://192.168.1.42:8473", "ab" * 32, tok, exp)
+    uri = vi.pair_uri(vi.profile_id(sec), "Don's PC+1", "wss://192.168.1.42:8473", "ab" * 32, tok, exp)
     assert uri.startswith("victorpc://pair?v=1&id=") and "%2B" in uri and "+" not in uri
     f = vi.parse_uri(uri)
     assert f["v"] == "1" and f["iw"] == "wss://192.168.1.42:8473" and f["ifp"].startswith("SHA256:")
@@ -41,8 +40,8 @@ def test_redeem_mints_bearer_once_and_rejects_replay():
     tok, _ = vi.start_pairing(sec, now=300)
     bearer, pub = vi.redeem(sec, tok, "Pixel 8", now=301)
     assert bearer.startswith("victor-input-") and pub["name"] == "Phone: Pixel 8"
-    assert bearer not in json.dumps(sec) and apikeys.sha(bearer) in sec["input_devices"]
-    with pytest.raises(apikeys.PairError, match="none"):
+    assert bearer not in json.dumps(sec) and vi.sha(bearer) in sec["input_devices"]
+    with pytest.raises(vi.PairError, match="none"):
         vi.redeem(sec, tok, "Pixel 8", now=302)     # single use
     h, meta, err = vi.check_token(sec, bearer)
     assert err is None and meta["name"] == "Phone: Pixel 8"
@@ -52,9 +51,9 @@ def test_redeem_mints_bearer_once_and_rejects_replay():
     assert vi.check_token(sec, bearer)[2] == "revoked"
     tok, _ = vi.start_pairing(sec, now=400)
     for _ in range(3):
-        with pytest.raises(apikeys.PairError):
+        with pytest.raises(vi.PairError):
             vi.redeem(sec, "AAAAAAAAAAAAAAAAAAAAAA", "x", now=401)
-    with pytest.raises(apikeys.PairError, match="none"):
+    with pytest.raises(vi.PairError, match="none"):
         vi.redeem(sec, tok, "x", now=402)
 
 
