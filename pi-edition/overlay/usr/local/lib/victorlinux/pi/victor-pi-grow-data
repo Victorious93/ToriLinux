@@ -1,0 +1,19 @@
+#!/bin/bash
+# First boot: grow partition 3 (ext4, label VICTORDATA) to the end of the SD card / USB drive, then resize it.
+# Runs once (stamp file); never touches partitions 1-2. Safe to re-run: does nothing if already at full size.
+set -Eeuo pipefail
+stamp=/var/lib/victorlinux/data-grown
+[ -e "$stamp" ] && exit 0
+root_src="$(findmnt -no SOURCE /)"
+disk="/dev/$(lsblk -no PKNAME "$root_src")"
+case "$disk" in /dev/mmcblk*|/dev/nvme*) part="${disk}p3";; *) part="${disk}3";; esac
+[ -b "$part" ] || { echo "grow-data: $part not found; skipping" >&2; exit 0; }
+[ "$(blkid -s LABEL -o value "$part")" = VICTORDATA ] || { echo "grow-data: $part is not VICTORDATA; skipping" >&2; exit 0; }
+mountpoint -q /run/victor/data && { echo "grow-data: data already mounted; will retry next boot" >&2; exit 0; }
+echo ", +" | sfdisk --no-reread --no-tell-kernel -N 3 "$disk"
+partx -u "$disk" || true
+udevadm settle || true
+e2fsck -p -f "$part" || [ $? -le 1 ]
+resize2fs "$part"
+install -d /var/lib/victorlinux && date -u +%FT%TZ > "$stamp"
+echo "grow-data: VICTORDATA grown to $(lsblk -no SIZE "$part")"

@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""victor-pi-priv: root helper for Pi-only actions (fixed verbs, strict validation). The owner may call it via sudoers.
+
+Verbs: board-detect | wifi-country CC | wifi-connect SSID (passphrase on stdin) | bt on|off | radio-status
+       ssh-keys (keys on stdin) | restore-keys | full-name NAME | firstboot-file | mark-done | setup-status"""
+import io, json, os, pwd, subprocess, sys
+sys.path.insert(0, "/usr/local/lib/victorlinux/pi")
+import victorpi
+
+OWNER = "victor"
+RUN = "/run/victor"
+STATE = "/var/lib/victorlinux"
+DONE = f"{STATE}/firstboot.done"
+CMDLINE = "/boot/firmware/cmdline.txt"
+FIRSTBOOT_FILE = "/boot/firmware/victor-firstboot.conf"
+DATA_SECRETS = f"{RUN}/root/secrets"          # VICTORDATA via victor-storage.service
+
+
+def die(msg, code=2):
+    print(msg, file=sys.stderr); sys.exit(code)
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def owner():
+    p = pwd.getpwnam(OWNER); return p.pw_uid, p.pw_gid
+
+
+def write(path, text, mode=0o644):
+    tmp = path + ".tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), "w") as f:
+        f.write(text)
+    os.chmod(tmp, mode); os.replace(tmp, path)
+
+
+def cmd_board_detect():
+    try:
+        model = open("/proc/device-tree/model").read()
+    except OSError:
+        model = ""
+    mem = next((int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemTotal:")), 0)
+    info = victorpi.classify(model, mem)
+    os.makedirs(RUN, exist_ok=True)
+    write(f"{RUN}/pi-board.json", json.dumps(info, indent=1) + "\n")
+    flag = f"{RUN}/llm-disabled"           # read by victorlib.llama.start(); per boot, so a card can move between boards
+    if info["llm_allowed"]:
+        if os.path.exists(flag):
+            os.unlink(flag)
+    else:
+        write(flag, info["reason"] + "\n")
+    print(json.dumps(info))
+
+
+def cmd_wifi_country(cc):
+    cc = cc.upper()
+    if not victorpi.valid_country(cc):
+        die("country must be a 2-letter ISO code, e.g. US")
+    write("/etc/modprobe.d/victor-wifi-country.conf", f"options cfg80211 ieee80211_regdom={cc}\n")
+    if os.path.exists(CMDLINE):
+        write(CMDLINE, victorpi.set_cmdline_regdom(open(CMDLINE).read(), cc), 0o755)
+    run(["iw", "reg", "set", cc])
+    run(["rfkill", "unblock", "wifi"])       # raspberrypi-sys-mods keeps radios soft-blocked until a country is set
+    print(f"Wi-Fi country set to {cc}; Wi-Fi radio unblocked")
+
+
+def cmd_wifi_connect(ssid):
+    psk = sys.stdin.readline().rstrip("\n")
+    try:
+        text = victorpi.nm_wifi_keyfile(ssid, psk)
+    except ValueError as e:
+        die(str(e))
+    d = "/etc/NetworkManager/system-connections"; os.makedirs(d, exist_ok=True)
+    write(f"{d}/victor-wifi.nmconnection", text, 0o600)
+    run(["nmcli", "connection", "reload"])
+    r = run(["nmcli", "connection", "up", "victor-wifi"], timeout=60)
+    print("Wi-Fi saved" + ("" if r.returncode == 0 else " (not connected yet: " + (r.stderr.strip() or "no network") + ")"))
+
+
+def cmd_bt(state):
+    if state not in ("on", "off"):
+        die("bt takes on or off")
+    if state == "on":
+        run(["rfkill", "unblock", "bluetooth"]); run(["systemctl", "start", "bluetooth"])
+        r = run(["bluetoothctl", "power", "on"], timeout=20)
+    else:
+        run(["bluetoothctl", "power", "off"], timeout=20); r = run(["rfkill", "block", "bluetooth"])
+    print(f"Bluetooth {state}" + ("" if r.returncode == 0 else " (adapter not ready: " + r.stderr.strip() + ")"))
+
+
+def cmd_radio_status():
+    r = run(["rfkill", "--json"])
+    print(r.stdout if r.returncode == 0 else json.dumps({"error": r.stderr.strip()}))
+
+
+def valid_keys(text):
+    keys = []
+    for l in text.splitlines():
+        l = l.strip()
+        if not l or l.startswith("#"):
+            continue
+        if run(["ssh-keygen", "-l", "-f", "/dev/stdin"], input=l + "\n").returncode != 0:
+            die("not a valid SSH public key: " + l[:40])
+        keys.append(l)
+    if not keys:
+        die("no SSH public keys given")
+    return keys
+
+
+def install_keys(keys):
+    uid, gid = owner(); d = f"/home/{OWNER}/.ssh"
+    os.makedirs(d, mode=0o700, exist_ok=True); os.chown(d, uid, gid)
+    write(f"{d}/authorized_keys", "\n".join(keys) + "\n", 0o600); os.chown(f"{d}/authorized_keys", uid, gid)
+    if os.path.isdir(DATA_SECRETS):              # also kept on VICTORDATA so they survive reflashing the root partition
+        write(f"{DATA_SECRETS}/ssh_authorized_keys", "\n".join(keys) + "\n", 0o600)
+
+
+def cmd_ssh_keys():
+    data = sys.stdin.read(65537)
+    if len(data) > 65536:
+        die("too much input")
+    keys = valid_keys(data); install_keys(keys)
+    print(f"{len(keys)} SSH key(s) saved. SSH stays off unless you enable it (key-only).")
+
+
+def cmd_restore_keys():
+    src, dst = f"{DATA_SECRETS}/ssh_authorized_keys", f"/home/{OWNER}/.ssh/authorized_keys"
+    if os.path.exists(src) and not os.path.exists(dst):
+        install_keys(valid_keys(open(src).read())); print("SSH keys restored from the data partition")
+
+
+def cmd_full_name(name):
+    if len(name) > 64 or any(c in name for c in ":,=\n"):
+        die("name must be at most 64 characters without : , =")
+    r = run(["chfn", "-f", name, OWNER])
+    if r.returncode:
+        die(r.stderr.strip())
+    print("name saved")
+
+
+def cmd_mark_done():
+    os.makedirs(STATE, exist_ok=True); write(DONE, "done\n"); print("first-boot setup complete")
+
+
+def owner_locked():
+    for l in open("/etc/shadow"):
+        f = l.split(":")
+        if f[0] == OWNER:
+            return f[1].startswith(("!", "*")) or f[1] == ""
+    return True
+
+
+def cmd_setup_status():
+    print("done" if os.path.exists(DONE) and not owner_locked() else "needed")
+
+
+def cmd_firstboot_file():
+    """Setup without a screen (e.g. Zero 2 W): apply /boot/firmware/victor-firstboot.conf once, then destroy it."""
+    if not os.path.exists(FIRSTBOOT_FILE):
+        return
+    text = open(FIRSTBOOT_FILE).read(65536)
+    try:                                          # never leave credentials on the FAT partition, valid or not
+        with open(FIRSTBOOT_FILE, "r+b") as f:
+            f.write(b"\0" * os.path.getsize(FIRSTBOOT_FILE)); f.flush(); os.fsync(f.fileno())
+    finally:
+        os.unlink(FIRSTBOOT_FILE)
+    cfg, errs = victorpi.parse_firstboot(text)
+    os.makedirs(STATE, exist_ok=True)
+    if errs:
+        write(f"{STATE}/firstboot-errors.txt", "\n".join(errs) + "\n")
+        die("victor-firstboot.conf rejected (nothing applied): " + "; ".join(errs))
+    if cfg.get("FULL_NAME"):
+        cmd_full_name(cfg["FULL_NAME"])
+    if cfg.get("WIFI_COUNTRY"):
+        cmd_wifi_country(cfg["WIFI_COUNTRY"])
+    if cfg.get("WIFI_SSID"):
+        sys.stdin = io.StringIO(cfg.get("WIFI_PSK", "") + "\n"); cmd_wifi_connect(cfg["WIFI_SSID"])
+    if cfg["SSH_AUTHORIZED_KEY"]:
+        install_keys(valid_keys("\n".join(cfg["SSH_AUTHORIZED_KEY"])))
+    if cfg.get("PASSWORD_HASH"):
+        run(["usermod", "-p", cfg["PASSWORD_HASH"], OWNER], check=True); run(["usermod", "-aG", "sudo", OWNER])
+        if os.path.isdir(DATA_SECRETS):           # same persistence record victor-priv set-password writes
+            write(f"{DATA_SECRETS}/owner.shadow", json.dumps({"hash": cfg["PASSWORD_HASH"]}), 0o600)
+    if cfg.get("SSH_ENABLE", "no").lower() == "yes":
+        r = run(["/usr/local/lib/victorlinux/victor-priv", "ssh-enable", f"/home/{OWNER}/.ssh/authorized_keys", "0.0.0.0"])
+        print(r.stdout.strip() or r.stderr.strip())
+    if cfg.get("PASSWORD_HASH"):
+        cmd_mark_done()
+    print("victor-firstboot.conf applied and removed")
+
+
+VERBS = {"board-detect": (cmd_board_detect, 0), "wifi-country": (cmd_wifi_country, 1), "wifi-connect": (cmd_wifi_connect, 1),
+         "bt": (cmd_bt, 1), "radio-status": (cmd_radio_status, 0), "ssh-keys": (cmd_ssh_keys, 0),
+         "restore-keys": (cmd_restore_keys, 0), "full-name": (cmd_full_name, 1), "firstboot-file": (cmd_firstboot_file, 0),
+         "mark-done": (cmd_mark_done, 0), "setup-status": (cmd_setup_status, 0)}
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        die("must run as root (sudo -n /usr/local/lib/victorlinux/pi/victor-pi-priv ...)")
+    if len(sys.argv) < 2 or sys.argv[1] not in VERBS:
+        die("verbs: " + ", ".join(VERBS))
+    fn, n = VERBS[sys.argv[1]]
+    if len(sys.argv) - 2 != n:
+        die(f"{sys.argv[1]} takes {n} argument(s)")
+    fn(*sys.argv[2:])

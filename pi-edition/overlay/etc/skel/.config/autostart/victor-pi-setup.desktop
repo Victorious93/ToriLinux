@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=VictorLinux first-boot setup
+Exec=/usr/local/bin/victor-pi-setup
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true

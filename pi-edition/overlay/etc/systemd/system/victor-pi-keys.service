@@ -1,0 +1,11 @@
+[Unit]
+Description=VictorLinux Pi: restore saved SSH authorized keys from VICTORDATA if the root was reflashed
+After=victor-storage.service
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/victorlinux/pi/victor-pi-priv restore-keys
+
+[Install]
+WantedBy=multi-user.target

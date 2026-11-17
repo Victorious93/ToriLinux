@@ -1,0 +1,10 @@
+# Raspberry Pi archive (archive.raspberrypi.com) is used ONLY for the Pi boot chain, kernels and
+# board firmware. Everything else comes from Debian. Packages that exist only in the Pi archive
+# (their dependencies) are still installable because they have no Debian candidate.
+Package: *
+Pin: origin archive.raspberrypi.com
+Pin-Priority: 100
+
+Package: raspi-firmware linux-image-rpi-* linux-base-rpi-* linux-image-*-rpi-* firmware-brcm80211 bluez-firmware pi-bluetooth raspi-utils* raspberrypi-sys-mods raspi-config rpi-eeprom raspberrypi-archive-keyring
+Pin: origin archive.raspberrypi.com
+Pin-Priority: 1001

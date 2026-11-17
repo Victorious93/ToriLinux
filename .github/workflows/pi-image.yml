@@ -1,0 +1,76 @@
+name: VictorLinux Pi image
+
+# Raspberry Pi edition (arm64). Static checks + tests on every relevant PR/push.
+# Image build: both profiles on PRs that touch the Pi edition (native arm64 runner; pi-headless took ~10 min including
+# the llama.cpp build); one chosen profile/runner via workflow_dispatch. On a non-arm64 runner the build
+# falls back to qemu-user-static + binfmt (much slower, hours). No secrets are used.
+on:
+  workflow_dispatch:
+    inputs:
+      profile: { description: "pi-headless or pi-desktop", default: "pi-headless", type: choice, options: [pi-headless, pi-desktop] }
+      runner: { description: "runs-on label (ubuntu-24.04-arm = native arm64; ubuntu-24.04 = qemu)", default: "ubuntu-24.04-arm", type: string }
+      no_llama: { description: "skip the llama.cpp build (faster smoke build)", default: false, type: boolean }
+  pull_request:
+    paths: ["pi-edition/**", ".github/workflows/pi-image.yml", "debian-edition/config/**", "debian-edition/versions.env", "fleet/**"]
+  push:
+    branches: [main]
+    paths: ["pi-edition/**", ".github/workflows/pi-image.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck mtools dosfstools fdisk e2fsprogs gnupg
+      - name: Shell syntax
+        run: for f in pi-edition/build.sh pi-edition/scripts/*.sh pi-edition/hooks/*.sh pi-edition/overlay/usr/local/bin/victor-pi-setup-tui pi-edition/overlay/usr/local/lib/victorlinux/pi/victor-pi-grow-data pi-edition/overlay/usr/local/lib/victorlinux/pi/hooks/run-hook; do bash -n "$f"; done
+      - name: Tests (config, package lists, shellcheck, image layout)
+        run: python3 -I -m unittest discover -s pi-edition/tests -p 'test_*.py' -v
+
+  image:
+    needs: checks
+    if: github.event_name != 'push'
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.profile)) || fromJSON('["pi-headless","pi-desktop"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools (mmdebstrap + pinned Debian archive keyring)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mmdebstrap mtools dosfstools fdisk e2fsprogs xz-utils gnupg curl ca-certificates file
+          if [ "$(uname -m)" != aarch64 ]; then sudo apt-get install -y -qq qemu-user-static binfmt-support; fi
+          cd "$(mktemp -d)"
+          curl -fsSLO https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
+          echo "9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac  debian-archive-keyring_2025.1_all.deb" | sha256sum -c
+          sudo dpkg -i --force-overwrite debian-archive-keyring_2025.1_all.deb
+          mmdebstrap --version; uname -m; df -h / "$RUNNER_TEMP"
+      - name: Build image
+        run: |
+          extra=""; [ "${{ inputs.no_llama }}" = true ] && extra="--no-llama"
+          sudo ./pi-edition/build.sh --profile "${{ matrix.profile }}" --workdir "$RUNNER_TEMP/pi-build" --out "$PWD/out/pi" $extra
+      - name: Inspect image
+        run: |
+          set -euo pipefail
+          f="$(ls out/pi/*.img.xz | head -1)"; ( cd out/pi && sha256sum -c ./*.sha256 )
+          xz -dc "$f" > /tmp/check.img && sfdisk -d /tmp/check.img
+          python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(m['profile'], m['package_count'], m['llama_cpp_build'], m['image_facts'].get('kernel_modules_dir'))" out/pi/*.manifest.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: victorlinux-${{ matrix.profile }}
+          path: |
+            out/pi/*.img.xz
+            out/pi/*.sha256
+            out/pi/*.manifest.json
+            out/pi/build-*.log
+          retention-days: 7
+          if-no-files-found: warn

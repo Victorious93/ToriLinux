@@ -1,0 +1,19 @@
+[Unit]
+Description=VictorLinux Pi: first-boot setup on the console (headless profile, until the owner has a password)
+After=victor-pi-firstboot-file.service victor-storage.service victor-access.service NetworkManager.service
+ConditionPathExists=!/var/lib/victorlinux/firstboot.done
+Conflicts=getty@tty1.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/victor-pi-setup-tui
+ExecStopPost=/bin/systemctl --no-block start getty@tty1.service
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target

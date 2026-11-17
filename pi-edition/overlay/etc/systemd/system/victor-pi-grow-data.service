@@ -1,0 +1,12 @@
+[Unit]
+Description=VictorLinux Pi: grow the VICTORDATA partition to fill the card (first boot only)
+ConditionPathExists=!/var/lib/victorlinux/data-grown
+After=local-fs.target
+Before=victor-storage.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/victorlinux/pi/victor-pi-grow-data
+
+[Install]
+WantedBy=multi-user.target

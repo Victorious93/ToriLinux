@@ -182,7 +182,20 @@ def preflight(c, backend, size):
     return limit, warn
 
 
+LLM_DISABLED_FLAG = os.path.join(RUN, "llm-disabled")   # written at boot by boards that act only as nodes (Pi edition)
+
+
+def llm_disabled_reason():
+    try:
+        return open(LLM_DISABLED_FLAG).read().strip() or "LLM serving is disabled on this device."
+    except OSError:
+        return None
+
+
 def start():
+    why = llm_disabled_reason()
+    if why:
+        raise VictorError(why)
     c = load_config()
     errs = validate(c)
     if errs:
