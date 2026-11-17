@@ -6,7 +6,7 @@
 
 **A portable, private AI workstation. Boot from a USB stick, keep your files on the drives you already own.**
 
-Works on its own; fleet integration (droidcommand-AI) is optional
+Works on its own; fleet integration (droidcommand-AI) is optional.
 
 <p>
   <a href="https://github.com/Victorious93/VictorLinux/releases"><img src="https://img.shields.io/badge/Release-none_yet-00E5FF?style=flat-square&labelColor=0B0F1A" alt="Release: none yet" /></a>
@@ -20,7 +20,27 @@ Works on its own; fleet integration (droidcommand-AI) is optional
 VictorLinux boots a PC from a USB drive, or from an ISO exposed by [Victorious Flash](https://github.com/Victorious93/victorious-flash) on a supported rooted Android phone.
 Inference runs on the **PC's** hardware, with no telemetry, no automatic downloads and no cloud fallback.
 
-[Storage](#use-the-storage-you-already-own) · [Install](#install--download) · [Build](#build-from-source) · [Editions](#choose-an-edition) · [Boot media](#boot-media) · [Capacity & filesystems](#capacity-and-filesystems) · [Troubleshooting](#troubleshooting) · [Docs](#documentation) · [Status](#status-and-testing)
+> [!IMPORTANT]
+> **Project status:** no release is published and no ISO of this revision has been booted on real hardware. Everything below is tested only as described in [Status and testing](#status-and-testing).
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#use-the-storage-you-already-own">Storage</a> ·
+  <a href="#choose-an-edition">Editions</a> ·
+  <a href="#boot-media">Boot media</a> ·
+  <a href="#capacity-and-filesystems">Filesystems</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="#status-and-testing">Status</a>
+</p>
+
+## Quick start
+
+1. **Get an ISO.** None is published, so [build one](#build-from-source) (`scripts/build.sh amd gui`) or use a CI artifact.
+2. **Write a boot stick** with `scripts/make-usb.sh` (erases the target; see [Install / download](#install--download)).
+3. **Boot the PC** from the stick and run `victor-open`.
+4. **Pick storage**, import or select a GGUF model, and press **Start**.
 
 ## Features
 
@@ -53,6 +73,9 @@ The Arch ISO workflow ([Build ISO](https://github.com/Victorious93/VictorLinux/a
 The Debian edition can be built in CI when `debian-edition/` changes ([Debian ISO workflow](https://github.com/Victorious93/VictorLinux/actions/workflows/debian-iso.yml)); those outputs are CI artifacts, not a release, and no ISO of this revision has been booted on real hardware.
 
 Once you have an ISO, prepare a boot stick (this **erases** the target; read [boot media](docs/usb.md) first):
+
+> [!WARNING]
+> `make-usb.sh write` **erases the target device**. Run `list` and `plan` first and back up anything on it.
 
 ```sh
 sudo scripts/make-usb.sh list
@@ -180,10 +203,13 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 
 ## Documentation
 
-[Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
-[Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
-[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
-[Fleet integration plan](docs/FLEET_INTEGRATION_PLAN.md) · [Clients](docs/clients.md)
+| Area | Guides |
+|---|---|
+| **Getting started** | [Build](docs/build.md) · [Boot media / USB](docs/usb.md) · [Debian edition](debian-edition/README.md) |
+| **Storage & data** | [Storage](docs/storage.md) · [Model library](docs/model-library.md) · [Storage health & backups](docs/storage-health-backups.md) · [Ask your documents](docs/doc-chat.md) |
+| **Hardware & models** | [Hardware & models](docs/hardware-and-models.md) · [Check this PC](docs/check-this-pc.md) · [AMD GPU](docs/amd-gpu.md) · [Caching](docs/caching.md) |
+| **Network & security** | [Security](docs/security.md) · [Remote access](docs/remote-access.md) · [API keys & pairing](docs/api-keys-and-pairing.md) · [Maintenance](docs/maintenance.md) |
+| **Integrations** | [Fleet integration](docs/fleet-integration.md) · [Fleet plan](docs/FLEET_INTEGRATION_PLAN.md) · [Companion API](docs/companion-api.md) · [Clients](docs/clients.md) · [Phone mirroring](docs/phone-mirroring.md) · [Flash companion changes](docs/flash-companion-changes.md) |
 
 ## Status and testing
 
@@ -202,12 +228,15 @@ node tests/browser_ui.js
 
 ## Commands after the rename
 
-| Previous | Now | | Previous | Now |
-|---|---|---|---|---|
-| `tori-open` | `victor-open` | | `tori-bench` | `victor-bench` |
-| `tori-control-center` | `victor-control-center` | | `tori-capcheck` | `victor-capcheck` |
-| `tori-diag` | `victor-diag` | | `tori-tls-cert` | `victor-tls-cert` |
-| `tori-model-import` | `victor-model-import` | | | |
+| Previous | Now |
+|---|---|
+| `tori-open` | `victor-open` |
+| `tori-control-center` | `victor-control-center` |
+| `tori-diag` | `victor-diag` |
+| `tori-model-import` | `victor-model-import` |
+| `tori-bench` | `victor-bench` |
+| `tori-capcheck` | `victor-capcheck` |
+| `tori-tls-cert` | `victor-tls-cert` |
 
 Implementation directory `/usr/local/lib/victorlinux`; account `victor`; cache `$XDG_CACHE_HOME/victorlinux`. Developer overrides: `VICTOR_DATA`, `VICTOR_RUN_DIR`, `VICTOR_LLAMA_ROOT`, `VICTOR_CC_PORT`, `VICTOR_PRIV`, `VICTOR_VOL_BASE`.
 Public gateway routes are `/victor/health` and `/victor/capabilities`; the `/tori/` routes remain compatibility aliases. Existing data (`TORIDATA`, `tori/`) is reused without relabelling or moving it.
@@ -215,7 +244,7 @@ Some build metadata still names the former repository URL; this repository is [V
 
 ## License
 
-MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Those files are unchanged by this README polish.
+MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Credits
 
