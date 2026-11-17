@@ -10,3 +10,7 @@ airootfs/root/sources/
 {% for file in rendered %}
 {{ file }}
 {% endfor %}
+
+# never commit vendored wheels/sdists at the repository root
+/*.whl
+/*.tar.gz

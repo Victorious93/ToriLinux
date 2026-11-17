@@ -6,7 +6,7 @@ Work attribution: **Victorious / Victorious Framework**. This guide describes th
 
 | Component | Job | Where the code lives |
 |---|---|---|
-| VictorLinux | Boot the PC; detect and use the PC's CPU/GPU/RAM; run local models; persist owner work | `Victorious93/ToriLinux` |
+| VictorLinux | Boot the PC; detect and use the PC's CPU/GPU/RAM; run local models; persist owner work | `Victorious93/VictorLinux` |
 | Victorious Flash desktop | Verify and write an image to a physical removable drive | `Victorious93/victorious-flash` (Rust/Tauri/React) |
 | Victorious Flash Android | Expose a verified image through a supported rooted phone's USB gadget, or write it to a USB stick over OTG | Same repo, `android/` |
 | Victorious Browser | Android companion: saved fleet panels and authenticated PC inference/chat | `Victorious93/victorious-browser` |
