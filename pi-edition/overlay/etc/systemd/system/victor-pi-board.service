@@ -1,0 +1,14 @@
+[Unit]
+Description=VictorLinux Pi: detect board, disable LLM serving on node boards (Zero 2 W / low RAM)
+DefaultDependencies=no
+After=local-fs.target
+Before=victor-storage.service multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/bin/install -d -m 0755 -o victor -g victor /run/victor
+ExecStart=/usr/local/lib/victorlinux/pi/victor-pi-priv board-detect
+
+[Install]
+WantedBy=multi-user.target

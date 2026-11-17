@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""victor-pi: Raspberry Pi edition CLI (board status, radios, optional hooks). English only, no network calls."""
+import json, os, subprocess, sys
+sys.path.insert(0, "/usr/local/lib/victorlinux/pi")
+import victorpi
+
+PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/pi/victor-pi-priv"]
+HOOK = "/usr/local/lib/victorlinux/pi/hooks/run-hook"
+USAGE = """usage: victor-pi status [--json]
+       victor-pi bluetooth on|off        (onboard Bluetooth; off by default)
+       victor-pi wifi-country CC         (e.g. US; required before Wi-Fi works)
+       victor-pi wifi-connect SSID       (passphrase read from stdin)
+       victor-pi ssh-keys < keys.pub     (saved; SSH stays off until enabled)
+       victor-pi hooks                   (optional integrations and their state)
+       victor-pi hook NAME [ARGS...]     (scrcpy | phone-keyboard-bt | hotspot | mesh)"""
+
+
+def board():
+    try:
+        return json.load(open("/run/victor/pi-board.json"))
+    except (OSError, ValueError):
+        return {"board": "unknown", "reason": "victor-pi-board.service has not run"}
+
+
+def main(a):
+    if not a or a[0] in ("-h", "--help"):
+        print(USAGE); return 0
+    cmd = a[0]
+    if cmd == "status":
+        b = board()
+        llm = "disabled" if os.path.exists("/run/victor/llm-disabled") else "available"
+        if "--json" in a:
+            print(json.dumps({**b, "llm": llm}, indent=1)); return 0
+        print(f"Board:       {b.get('model') or b.get('board')}")
+        print(f"Role:        {b.get('role', '?')}  (LLM serving {llm})")
+        print(f"Why:         {b.get('reason', '')}")
+        rec = b.get("recommended_model")
+        if rec:
+            print(f"Suggested:   {rec['name']} (~{rec['approx_size']}, ctx {rec['ctx']}); not downloaded, import it yourself")
+        return 0
+    if cmd == "bluetooth" and len(a) == 2:
+        return subprocess.call([*PRIV, "bt", a[1]])
+    if cmd == "wifi-country" and len(a) == 2:
+        return subprocess.call([*PRIV, "wifi-country", a[1]])
+    if cmd == "wifi-connect" and len(a) == 2:
+        return subprocess.call([*PRIV, "wifi-connect", a[1]])
+    if cmd == "ssh-keys" and len(a) == 1:
+        return subprocess.call([*PRIV, "ssh-keys"])
+    if cmd == "hooks":
+        for n, h in victorpi.HOOKS.items():
+            print(f"{n:18} {'available' if h['script'] and os.path.exists(h['script']) else 'TODO'}  {h['desc']}"
+                  + (f"  [{h['todo']}]" if h["todo"] else ""))
+        return 0
+    if cmd == "hook" and len(a) >= 2:
+        return subprocess.call([HOOK, *a[1:]])
+    print(USAGE, file=sys.stderr); return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

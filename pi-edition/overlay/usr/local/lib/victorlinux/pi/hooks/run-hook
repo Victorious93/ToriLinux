@@ -1,0 +1,23 @@
+#!/bin/bash
+# victor-pi hook dispatcher. Every optional integration is OFF by default; nothing here runs at boot.
+# A hook either reuses the implementation that exists on main, or is a clearly marked TODO (exit 3).
+set -Eeuo pipefail
+name="${1:-}"; shift || true
+todo() { echo "TODO($name): $1" >&2; echo "Nothing was changed. Tracked in docs/raspberry-pi.md (Optional hooks)." >&2; exit 3; }
+case "$name" in
+  scrcpy)
+    # Reuses victor-phone + the Debian edition's optional scrcpy hook (merged in PR #9). scrcpy may be absent.
+    command -v victor-phone >/dev/null || todo "victor-phone is not installed"
+    exec victor-phone "$@";;
+  phone-keyboard-bt)
+    # TODO: reuse VictorLinux's Bluetooth keyboard pairing tool once it lands on main (Victorious Keyboard BT HID
+    # is not built on the phone yet). Until then, pair manually: victor-pi bluetooth on && bluetoothctl.
+    todo "Bluetooth keyboard/mouse pairing with Victorious Keyboard is not on main yet";;
+  hotspot)
+    # TODO: reuse the hotspot tool once it is on main. NetworkManager (in the image) is the intended backend.
+    todo "Wi-Fi hotspot tool is not on main yet";;
+  mesh)
+    # TODO: reuse the Victorious Mesh (tailscale + Headscale) tool once it is on main; tailscale is not in this image.
+    todo "Victorious Mesh join tool is not on main yet";;
+  *) echo "hooks: scrcpy | phone-keyboard-bt | hotspot | mesh" >&2; exit 2;;
+esac

@@ -1,0 +1,13 @@
+[Unit]
+Description=VictorLinux Pi: apply /boot/firmware/victor-firstboot.conf once (setup without a screen)
+ConditionPathExists=/boot/firmware/victor-firstboot.conf
+After=victor-storage.service victor-access.service NetworkManager.service
+Before=getty@tty1.service display-manager.service victor-pi-setup-tty.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/victorlinux/pi/victor-pi-priv firstboot-file
+SuccessExitStatus=0 2
+
+[Install]
+WantedBy=multi-user.target

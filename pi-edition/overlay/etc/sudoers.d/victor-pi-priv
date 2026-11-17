@@ -1,0 +1,2 @@
+# Pi edition: the owner may run ONLY this validated helper without a password (same model as victor-priv).
+victor ALL=(root) NOPASSWD: /usr/local/lib/victorlinux/pi/victor-pi-priv
