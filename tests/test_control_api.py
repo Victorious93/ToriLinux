@@ -126,6 +126,7 @@ def test_companion_report_is_authenticated_read_only_and_secret_free(tmp_path, m
                                                   "ngl": 0, "verify": {"state": "verified"}}))
     key = "victor-test-key-1234567890"
     import hashlib
+    gateway.tc.save_secrets({"api_keys": [hashlib.sha256(key.encode()).hexdigest()]})   # the gateway reads keys live
     monkeypatch.setattr(gateway.Handler, "cfg", {"require_auth": True, "keys": [hashlib.sha256(key.encode()).hexdigest()],
                                                  "upstream_port": 1, "upstream_key": "UPSTREAM-SECRET", "max_body": 1024, "tls": False})
     with serving(gateway.Handler) as port:
