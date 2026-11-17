@@ -3,7 +3,8 @@
 import argparse, json, os, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
-from victorlib import hw, storage, models, llama, api, bench, kali, diag
+from victorlib import hw, storage, models, llama, api, bench, kali, diag, pccheck, modellib, docchat
+from victorlib import diskhealth, vbackup
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -22,6 +23,202 @@ def out(a, obj):
         print(obj)
 
 
+BACKUP_ITEMS = ["settings", "chat"]
+BACKUP_SECRETS = ["secrets"]
+
+
+def storage_health():
+    space = diskhealth.free_space([("VictorLinux data", root_dir())])
+    smart, disks = [], []
+    for item in space:
+        r = run(["findmnt", "-n", "-o", "SOURCE", "--target", item["path"]])
+        item["disk"] = diskhealth.disk_of(r.stdout.strip().split("[")[0]) if r.returncode == 0 else None
+        if item["disk"] and item["disk"] not in disks:
+            disks.append(item["disk"])
+    for d in disks:
+        try:
+            smart.append(diskhealth.parse_smart(json.loads(priv("smart", d))))
+        except (VictorError, ValueError) as e:
+            smart.append({"device": d, "model": "", "status": "unknown", "findings": [{"level": "unknown", "text": f"SMART check unavailable: {e}", "fix": ""}]})
+    return diskhealth.report(space, smart)
+
+
+def _passphrase(a, confirm=False):
+    """Read from stdin (one line) - never from argv, so it cannot leak through ps or shell history."""
+    if sys.stdin.isatty():
+        import getpass
+        p = getpass.getpass("Backup passphrase: ")
+        if confirm and getpass.getpass("Repeat passphrase: ") != p:
+            raise VictorError("The passphrases do not match.")
+        return p
+    return sys.stdin.readline().rstrip("\n")
+
+
+def _backup_file(ref):
+    if vbackup.NAME_RE.match(os.path.basename(ref)) and os.sep not in ref:
+        return os.path.join(data_path("backups"), ref)
+    p = os.path.realpath(os.path.expanduser(ref))
+    if not p.endswith(vbackup.SUFFIX) or not os.path.isfile(p):
+        raise VictorError("Give a backup name from 'victor-ctl backup list' or the path of a .vlbak file.")
+    return p
+
+
+def backup_cmd(a):
+    allowed = BACKUP_ITEMS + BACKUP_SECRETS
+    try:
+        if a.cmd == "list":
+            return vbackup.list_backups(data_path("backups"))
+        if a.cmd == "create":
+            return vbackup.create(root_dir(), data_path("backups"), _passphrase(a, True), BACKUP_ITEMS, BACKUP_SECRETS, include_secrets=a.include_secrets)
+        if a.cmd == "inspect":
+            return vbackup.inspect(_backup_file(a.backup), _passphrase(a), allowed)
+        return vbackup.restore(_backup_file(a.backup), _passphrase(a), root_dir(), allowed, data_path("backups"), confirm=a.yes)
+    except vbackup.BackupError as e:
+        raise VictorError(str(e))
+
+
+def _doc_index():
+    return docchat.Index(data_path("docindex", "index.sqlite"))
+
+
+def _doc_private():
+    home = os.path.expanduser("~")
+    return [data_path("secrets"), data_path("settings"), data_path("docindex"), os.path.join(home, ".ssh"), os.path.join(home, ".gnupg")]
+
+
+def _doc_llm():
+    """Loopback URL + key of the running llama-server, or (None, None). Never a remote host."""
+    import ipaddress
+    c = llama.load_config()
+    if not llama.is_running() or not ipaddress.ip_address(c["bind"]).is_loopback:
+        return None, None
+    key = None
+    if os.path.exists(llama.key_path()):
+        with open(llama.key_path()) as f:
+            key = f.read().strip() or None
+    return f"http://127.0.0.1:{int(c['port'])}", key
+
+
+def _doc_embedder():
+    url, key = _doc_llm()
+    if not url:
+        return None
+    e = docchat.Embedder(url, key, timeout=30)
+    try:
+        e.embed(["probe"])
+        return e
+    except (OSError, ValueError):
+        return None
+
+
+def docs_cmd(a):
+    idx = _doc_index()
+    if a.cmd == "list":
+        return {"sources": idx.sources(), "stats": idx.stats()}
+    if a.cmd == "add":
+        try:
+            return {"added": idx.add_source(a.path, _doc_private())}
+        except docchat.DocError as e:
+            raise VictorError(str(e))
+    if a.cmd == "remove":
+        return {"removed_files": idx.remove_source(os.path.realpath(a.path)), "note": "Your files were not touched."}
+    if a.cmd == "index":
+        emb = _doc_embedder()
+        return idx.build(emb, llama.load_config().get("model") if emb else None, exclude=_doc_private()) | {"semantic": bool(emb)}
+    hits = idx.search(a.question, k=a.k, embedder=_doc_embedder())
+    res = {"hits": [{"path": h["path"], "text": h["text"][:900], "score": h["score"], "mode": h["mode"]} for h in hits]}
+    if a.cmd == "ask" and hits:
+        url, key = _doc_llm()
+        if url:
+            res["answer"] = docchat.answer(a.question, hits, url, key)
+        else:
+            res["message"] = "Start the model (bound to 127.0.0.1) for a written answer; matching passages are shown."
+    return res
+
+
+def pc_facts():
+    """Facts for the shared pccheck module, from victorlib.hw (same checks as the Arch Control Center)."""
+    snap = hw.snapshot()
+    try:
+        flags = sorted(pccheck.cpu_flags(open("/proc/cpuinfo").read()))
+    except OSError:
+        flags = []
+    vram = snap.get("sysfs_vram") or []
+    gpus = []
+    for i, g in enumerate(snap.get("pci_gpus") or []):
+        v = vram[i] if i < len(vram) else {}
+        gpus.append({"name": g.get("desc"), "vendor": str(g.get("vendor", "")).lower(), "driver": g.get("driver"),
+                     "pci_id": g.get("pci_id"), "vram_total": v.get("vram_total")})
+    vk = snap.get("vulkan") or {}
+    c = llama.load_config()
+    sel = hw.select_backend(c.get("backend", "auto"), (snap.get("llama_devices") or {}).get("devices", []), None)
+    st = storage.status()
+    state = str(st.get("state", ""))
+    mode = "persistent" if state.startswith(("mounted-rw", "persistent")) else "temporary" if "session" in state else state or "unknown"
+    have = os.path.exists(hw.LLAMA_SERVER)
+    return {"cpu": {"name": snap["cpu"]["model"], "threads": snap["cpu"]["cores"], "flags": flags}, "ram": snap["ram"], "gpus": gpus,
+            "render_nodes": [{"path": n["path"], "accessible": n["user_can_rw"]} for n in snap["permissions"]["render_nodes"]],
+            "vulkan": {"available": bool(vk.get("devices")), "error": vk.get("error"),
+                       "devices": [{"deviceName": d.get("name"), "deviceType": d.get("deviceType", ""), "driverName": d.get("driverName")} for d in vk.get("devices", [])]},
+            "backends": {"vulkan": have, "cpu": have}, "selected": {"backend": sel["backend"], "reason": sel["reason"]},
+            "storage": {"mode": mode, "free": (st.get("usage") or {}).get("free")}, "speed": None}
+
+
+def pc_check(save=True):
+    facts = pc_facts()
+    report = pccheck.evaluate(facts)
+    saved = None
+    if save:
+        try:
+            saved = pccheck.save_profile(data_path("reports"), facts, report)
+        except (VictorError, OSError) as e:
+            saved = {"error": str(e)}
+    return {"report": report, "saved": saved, "text": pccheck.as_text(report)}
+
+
+def _library():
+    return modellib.Library(os.path.join(data_path("settings"), "library.json"))
+
+
+def _pc_id():
+    snap = hw.snapshot(with_llama=False)
+    cpu = "?"
+    try:
+        cpu = next(l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name"))
+    except (OSError, StopIteration):
+        pass
+    return modellib.pc_signature(cpu, [g.get("desc") for g in snap.get("pci_gpus", [])], snap.get("ram", {}).get("total"))
+
+
+def library_cmd(a):
+    """Model library (same module as the Arch Control Center): integrity hashes and remembered settings."""
+    lib, base = _library(), data_path("models")
+    ms = [{"path": os.path.join(base, m["name"]), "name": m["name"], "size": m["size"]} for m in models.list_models()]
+    by_name = {m["name"]: m["path"] for m in ms}
+    def path_of(n):
+        if n not in by_name:
+            raise VictorError(f"no such model: {n} (see victor-ctl model list)")
+        return by_name[n]
+    if a.cmd == "library":
+        return lib.describe(ms, _pc_id())
+    if a.cmd == "hash":
+        names = a.names or list(by_name)
+        if a.expected:
+            if len(names) != 1:
+                raise VictorError("--expected needs exactly one model name")
+            lib.set_expected(path_of(names[0]), a.expected)
+        return {n: lib.hash_model(path_of(n)) for n in names}
+    if a.cmd == "accept":
+        lib.reset_hash(path_of(a.name)); return "reference checksum cleared; run 'victor-ctl model hash' again"
+    vals = {}
+    for kv in a.set:
+        k, _, v = kv.partition("=")
+        vals[k] = {"true": True, "false": False}.get(v.lower(), v) if k == "ctx_auto" else v
+    if not vals:
+        c = llama.load_config(); vals = {k: c[k] for k in ("backend", "ctx") if k in c}
+    return lib.remember(path_of(a.name), vals)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "fleet":      # fleet coordinator CLI lives in victor-fleet; same verbs, one entry point
         os.execv("/usr/local/bin/victor-fleet", ["victor-fleet", *sys.argv[2:]])
@@ -34,10 +231,17 @@ def main():
         for n in subs:
             r[n] = s.add_parser(n)
         return r
-    st = g("storage", "status", "list", "select", "session", "check", "repair", "init")
+    st = g("storage", "status", "list", "select", "session", "check", "repair", "init", "health")
+    bk = g("backup", "list", "create", "inspect", "restore")
+    bk["create"].add_argument("--include-secrets", action="store_true", help="also back up the API key and TLS keys")
+    bk["inspect"].add_argument("backup"); bk["restore"].add_argument("backup")
+    bk["restore"].add_argument("--yes", action="store_true", help="confirm: replace current settings and chats (previous copies are kept)")
     st["select"].add_argument("uuid")
     hwp = g("hw", "snapshot", "backend", "recommend")
-    mo = g("model", "list", "import", "inspect", "select", "remove")
+    mo = g("model", "list", "import", "inspect", "select", "remove", "library", "hash", "remember", "accept")
+    mo["hash"].add_argument("names", nargs="*"); mo["hash"].add_argument("--expected")
+    mo["remember"].add_argument("name"); mo["remember"].add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
+    mo["accept"].add_argument("name")
     mo["import"].add_argument("src"); mo["import"].add_argument("--sha256"); mo["import"].add_argument("--move", action="store_true")
     mo["inspect"].add_argument("path"); mo["select"].add_argument("name"); mo["remove"].add_argument("name")
     ll = g("llama", "start", "stop", "status", "config")
@@ -48,7 +252,12 @@ def main():
     ka = g("kali", "status", "start", "stop", "download", "load-pack")
     ka["start"].add_argument("--cap", action="append", default=[]); ka["download"].add_argument("--yes", action="store_true")
     ka["load-pack"].add_argument("tar")
-    g("diag", "show", "save-log")
+    dc = g("docs", "list", "add", "remove", "index", "search", "ask")
+    dc["add"].add_argument("path"); dc["remove"].add_argument("path")
+    for n in ("search", "ask"):
+        dc[n].add_argument("question"); dc[n].add_argument("-k", type=int, default=6, choices=range(1, 13), metavar="1-12")
+    dg = g("diag", "show", "save-log", "check")
+    dg["check"].add_argument("--no-save", action="store_true")
     g("versions", "show")
     a = ap.parse_args()
     try:
@@ -61,6 +270,8 @@ def main():
                 out(a, priv("storage-session"))
             elif a.cmd in ("check", "repair"):
                 out(a, priv("storage-" + a.cmd))
+            elif a.cmd == "health":
+                out(a, storage_health())
             elif a.cmd == "init":
                 storage.ensure_layout(root_dir()); out(a, "layout ready")
         elif a.grp == "hw":
@@ -87,6 +298,8 @@ def main():
                 c = llama.load_config()
                 if not os.path.isfile(os.path.join(data_path("models"), a.name)): raise VictorError("no such model")
                 c["model"] = a.name; llama.save_config(c); out(a, f"selected {a.name}")
+            elif a.cmd in ("library", "hash", "remember", "accept"):
+                out(a, library_cmd(a))
             elif a.cmd == "remove":
                 if llama.is_running(): raise VictorError("Stop the service before removing models.")
                 os.unlink(os.path.join(data_path("models"), a.name)); out(a, "removed")
@@ -118,7 +331,14 @@ def main():
             elif a.cmd == "download": out(a, kali.download_pack(a.yes))
             else: out(a, kali.load_pack(a.tar))
         elif a.grp == "diag":
-            out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
+            if a.cmd == "check":
+                out(a, pc_check(not a.no_save))
+            else:
+                out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
+        elif a.grp == "backup":
+            out(a, backup_cmd(a))
+        elif a.grp == "docs":
+            out(a, docs_cmd(a))
         elif a.grp == "versions":
             out(a, diag.collect()["image_facts"] | diag.collect()["llama_build"])
     except VictorError as e:

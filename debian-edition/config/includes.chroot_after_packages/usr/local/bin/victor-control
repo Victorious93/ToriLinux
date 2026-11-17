@@ -6,8 +6,8 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 CTL = "/usr/local/bin/victor-ctl"
 
 
-def ctl(*args, timeout=600):
-    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout)
+def ctl(*args, timeout=600, stdin=None):
+    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout, input=stdin)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.strip() or p.stdout.strip() or f"exit {p.returncode}")
     try:
@@ -16,8 +16,12 @@ def ctl(*args, timeout=600):
         return p.stdout.strip()
 
 
+# VictorLinux brand palette (same as the Arch web Control Center): background #0B0F1A,
+# primary accent cyan #00E5FF, secondary accent magenta #FF2BD6. Always dark; every pair meets WCAG AA.
 PALETTES = {
-    "dark": {"bg": "#101724", "panel": "#1b273b", "fg": "#edf2fa", "accent": "#b7a0ff", "entry": "#0c1420", "sel": "#34445f"},
+    "dark": {"bg": "#0b0f1a", "panel": "#161e31", "card": "#111727", "fg": "#e8eef9", "muted": "#9ba8c3",
+             "accent": "#00e5ff", "on_accent": "#05121a", "accent2": "#ff2bd6", "entry": "#0b0f1a", "sel": "#1d2740",
+             "border": "#33406a", "ok": "#3ee6a8", "warn": "#ffc857", "bad": "#ff6b88"},
 }
 
 
@@ -28,18 +32,43 @@ class App(tk.Tk):
         st.configure(".", background=P["bg"], foreground=P["fg"], fieldbackground=P["entry"], bordercolor=P["panel"], lightcolor=P["panel"], darkcolor=P["panel"])
         st.configure("TFrame", background=P["bg"]); st.configure("TLabel", background=P["bg"], foreground=P["fg"])
         st.configure("TLabelframe", background=P["bg"], foreground=P["fg"]); st.configure("TLabelframe.Label", background=P["bg"], foreground=P["fg"])
-        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=(14, 9)); st.map("TButton", background=[("active", P["sel"])])
+        st.configure("TButton", background=P["panel"], foreground=P["fg"], padding=(14, 9), bordercolor=P["border"], focuscolor=P["accent"])
+        st.map("TButton", background=[("disabled", P["card"]), ("active", P["sel"])], foreground=[("disabled", P["muted"])], bordercolor=[("focus", P["accent"]), ("active", P["accent"])])
+        # Primary action: cyan with dark text (12:1 contrast). Focus ring is cyan on every button.
+        st.configure("Accent.TButton", background=P["accent"], foreground=P["on_accent"], bordercolor=P["accent"], font=("Sans", 10, "bold"))
+        st.map("Accent.TButton", background=[("disabled", P["sel"]), ("active", "#5cf0ff")], foreground=[("disabled", P["muted"])])
+        st.configure("Danger.TButton", background="#2a1222", foreground="#ff9db1", bordercolor="#6e2c46")
+        st.map("Danger.TButton", background=[("active", "#3a1830")], bordercolor=[("focus", P["accent"]), ("active", P["bad"])])
+        st.configure("Card.TFrame", background=P["card"], bordercolor=P["border"], relief="solid", borderwidth=1)
+        st.configure("TileKey.TLabel", background=P["card"], foreground=P["muted"], font=("Sans", 8, "bold"))
+        st.configure("TileVal.TLabel", background=P["card"], foreground=P["fg"], font=("Sans", 13, "bold"))
+        st.configure("TileSub.TLabel", background=P["card"], foreground=P["muted"], font=("Sans", 9))
+        st.configure("Brand.TLabel", background=P["bg"], foreground=P["fg"], font=("Sans", 22, "bold"))
+        st.configure("Eyebrow.TLabel", background=P["bg"], foreground=P["accent2"], font=("Sans", 9, "bold"))
+        st.configure("Status.TLabel", background=P["card"], foreground=P["muted"], padding=(10, 4))
+        for k in ("ok", "warn", "bad"):
+            st.configure(f"Status{k.title()}.TLabel", background=P["card"], foreground=P[k], padding=(10, 4))
+        st.configure("TScrollbar", background=P["panel"], troughcolor=P["bg"], arrowcolor=P["fg"])
+        st.configure("TCombobox", fieldbackground=P["entry"], foreground=P["fg"], arrowcolor=P["accent"])
         st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"]); st.map("TCheckbutton", background=[("active", P["bg"])])
-        st.configure("TEntry", fieldbackground=P["entry"], foreground=P["fg"], insertcolor=P["fg"])
+        st.configure("TEntry", fieldbackground=P["entry"], foreground=P["fg"], insertcolor=P["accent"], bordercolor=P["border"])
+        st.map("TEntry", bordercolor=[("focus", P["accent"])], lightcolor=[("focus", P["accent"])])
         st.configure("TNotebook", background=P["bg"]); st.configure("TNotebook.Tab", background=P["panel"], foreground=P["fg"], padding=(10, 4))
-        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", "#18102e")])
+        st.map("TNotebook.Tab", background=[("selected", P["accent"])], foreground=[("selected", P["on_accent"])])
         self.configure(bg=P["bg"])
         self.option_add("*Listbox.background", P["entry"]); self.option_add("*Listbox.foreground", P["fg"])
-        self.option_add("*Listbox.selectBackground", P["accent"]); self.option_add("*Text.background", P["entry"]); self.option_add("*Text.foreground", P["fg"])
+        self.option_add("*Listbox.selectBackground", P["accent"]); self.option_add("*Listbox.selectForeground", P["on_accent"])
+        self.option_add("*Text.background", P["entry"]); self.option_add("*Text.foreground", P["fg"])
+        self.option_add("*highlightColor", P["accent"]); self.option_add("*highlightBackground", P["bg"])
+        # Message boxes and file dialogs inherit these (no white dialogs).
+        self.option_add("*background", P["bg"]); self.option_add("*foreground", P["fg"])
+        self.option_add("*selectBackground", P["accent"]); self.option_add("*selectForeground", P["on_accent"])
+        self.option_add("*insertBackground", P["accent"]); self.option_add("*activeBackground", P["sel"]); self.option_add("*activeForeground", P["fg"])
         for w in getattr(self, "_themed", []):
             try:
-                w.configure(bg=P["entry"], fg=P["fg"], insertbackground=P["fg"])
-                if isinstance(w, tk.Listbox): w.configure(selectbackground=P["accent"])
+                w.configure(bg=P["entry"], fg=P["fg"], insertbackground=P["accent"], highlightthickness=1,
+                            highlightbackground=P["border"], highlightcolor=P["accent"], relief="flat")
+                if isinstance(w, tk.Listbox): w.configure(selectbackground=P["accent"], selectforeground=P["on_accent"])
             except tk.TclError:
                 pass
 
@@ -53,7 +82,8 @@ class App(tk.Tk):
                 inset = max(0, math.ceil(radius - math.sqrt(max(0, radius * radius - dy * dy))))
                 img.put(color, to=(inset, y, 40 - inset, y + 1))
             return img
-        self._tab_images = [image(c) for c in ("#1b273b", "#b7a0ff", "#34445f")]
+        P = PALETTES["dark"]
+        self._tab_images = [image(c) for c in (P["panel"], P["accent"], P["sel"])]
         style = ttk.Style(self)
         style.element_create("Victor.Tab", "image", self._tab_images[0],
                              ("selected", self._tab_images[1]), ("active", self._tab_images[2]),
@@ -68,18 +98,38 @@ class App(tk.Tk):
         self.apply_theme("dark"); self.rounded_tabs()
         self.title("VictorLinux Control Center")
         self.geometry("1040x760"); self.minsize(900, 640)
-        header = ttk.Frame(self, padding=(22, 18)); header.pack(fill="x")
-        ttk.Label(header, text="VictorLinux", font=("Sans", 22, "bold")).pack(anchor="w")
-        ttk.Label(header, text="VICTORIOUS FRAMEWORK   •   LOCAL AI WORKSPACE   •   ALWAYS DARK").pack(anchor="w", pady=(5, 0))
-        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
+        header = ttk.Frame(self, padding=(22, 16, 22, 6)); header.pack(fill="x")
+        ttk.Label(header, text="VICTORIOUS FRAMEWORK  ·  LOCAL AI WORKSPACE", style="Eyebrow.TLabel").pack(anchor="w")
+        ttk.Label(header, text="VictorLinux", style="Brand.TLabel").pack(anchor="w")
+        tk.Frame(self, height=2, bg=PALETTES["dark"]["accent"]).pack(fill="x", padx=22)
         self.status_var = tk.StringVar(value="starting...")
-        ttk.Label(self, textvariable=self.status_var, anchor="w", relief="sunken").pack(fill="x", side="bottom")
-        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_diag()
+        self.status_label = ttk.Label(self, textvariable=self.status_var, anchor="w", style="Status.TLabel")
+        self.status_label.pack(fill="x", side="bottom")
+        self.tiles = {}
+        strip = ttk.Frame(self, padding=(18, 10, 18, 0)); strip.pack(fill="x")
+        for i, (key, title) in enumerate((("model", "MODEL"), ("backend", "BACKEND"), ("api", "API"),
+                                          ("storage", "STORAGE"), ("ram", "RAM"), ("vram", "VRAM"))):
+            card = ttk.Frame(strip, style="Card.TFrame", padding=(12, 8)); card.grid(row=0, column=i, sticky="nsew", padx=4)
+            strip.columnconfigure(i, weight=1, uniform="tile")
+            ttk.Label(card, text=title, style="TileKey.TLabel").pack(anchor="w")
+            v, sub = tk.StringVar(value="…"), tk.StringVar(value="loading")
+            ttk.Label(card, textvariable=v, style="TileVal.TLabel").pack(anchor="w")
+            ttk.Label(card, textvariable=sub, style="TileSub.TLabel", wraplength=140).pack(anchor="w")
+            self.tiles[key] = (v, sub)
+        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_docs(); self.tab_diag()
         self.after(500, self.refresh)
 
     # ---- helpers
+    def set_status(self, text, level=None):
+        self.status_var.set(text)
+        self.status_label.configure(style=f"Status{level.title()}.TLabel" if level else "Status.TLabel")
+
+    def tile(self, key, value, sub=""):
+        v, s = self.tiles[key]; v.set(value); s.set(sub)
+
     def bg(self, fn, done=None, busy="working..."):
-        self.status_var.set(busy)
+        self.set_status("⏳ " + busy)
         def w():
             try:
                 r = fn(); err = None
@@ -90,9 +140,9 @@ class App(tk.Tk):
 
     def _done(self, r, err, done):
         if err:
-            self.status_var.set("error"); messagebox.showerror("VictorLinux", err)
+            self.set_status("error: " + err.splitlines()[0][:160] if err.strip() else "error", "bad"); messagebox.showerror("VictorLinux", err)
         else:
-            self.status_var.set("ok")
+            self.set_status("ready", "ok")
             if done:
                 done(r)
 
@@ -115,10 +165,11 @@ class App(tk.Tk):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Status")
         self.st_text = self.mkout(f)
         b = ttk.Frame(f); b.pack(fill="x")
-        for label, fn in (("Start inference", self.start), ("Stop inference", lambda: self.bg(lambda: ctl("llama", "stop"), lambda r: self.refresh())),
-                          ("Open local chat", self.open_chat), ("Terminal", lambda: subprocess.Popen(["xfce4-terminal"])),
-                          ("Refresh", self.refresh)):
-            ttk.Button(b, text=label, command=fn).pack(side="left", padx=3)
+        for label, fn, style in (("Start inference", self.start, "Accent.TButton"),
+                                 ("Stop inference", lambda: self.bg(lambda: ctl("llama", "stop"), lambda r: self.refresh()), "Danger.TButton"),
+                                 ("Open local chat", self.open_chat, "TButton"), ("Terminal", lambda: subprocess.Popen(["xfce4-terminal"]), "TButton"),
+                                 ("Refresh", self.refresh, "TButton")):
+            ttk.Button(b, text=label, command=fn, style=style).pack(side="left", padx=3)
         ttk.Label(f, text="Image generation: optional pack, not installed in this image (see docs/PACKS.md).").pack(anchor="w", pady=4)
 
     def start(self):
@@ -138,9 +189,15 @@ class App(tk.Tk):
 
     def refresh(self):
         def get():
-            return {"hw": ctl("hw", "snapshot", timeout=90), "st": ctl("storage", "status"), "ll": ctl("llama", "status")}
+            d = {"hw": ctl("hw", "snapshot", timeout=90), "st": ctl("storage", "status"), "ll": ctl("llama", "status")}
+            try:
+                d["cfg"] = ctl("llama", "config")
+            except Exception:  # noqa: config is optional for the overview
+                d["cfg"] = {}
+            return d
         def done(d):
             hw, st, ll = d["hw"], d["st"], d["ll"]
+            self.update_tiles(hw, st, ll, d.get("cfg") or {})
             lines = [f"Storage : {st.get('state')} - {st.get('message')}"]
             u = st.get("usage")
             if u:
@@ -159,6 +216,28 @@ class App(tk.Tk):
             self.out(self.st_text, "\n".join(lines))
         self.bg(get, done, "refreshing...")
 
+    def update_tiles(self, hw, st, ll, cfg):
+        """Status overview strip: model, backend, API on/off + bind, storage, RAM, VRAM."""
+        gib = lambda n: f"{n / 2**30:.1f} GiB"
+        rt = ll.get("runtime") or {}
+        model = (rt.get("model") if ll.get("running") else None) or cfg.get("model") or ""
+        self.tile("model", os.path.basename(str(model)) or "None selected",
+                  "loaded" if ll.get("running") else ("not loaded" if model else "pick one in Models"))
+        be = (rt.get("backend") or {}) if ll.get("running") else {}
+        name = str(be.get("backend") or cfg.get("backend") or "auto")
+        self.tile("backend", {"cpu": "CPU", "vulkan": "Vulkan", "cuda": "CUDA", "hip": "HIP"}.get(name.lower(), name.upper()),
+                  str(be.get("reason") or ("configured" if not ll.get("running") else ""))[:60])
+        remote = bool((cfg.get("remote") or {}).get("enabled")) if isinstance(cfg.get("remote"), dict) else False
+        bind, port = cfg.get("bind", "127.0.0.1"), cfg.get("port", "")
+        self.tile("api", "On" if ll.get("running") else "Off", f"{bind}{':' + str(port) if port else ''} · {'remote' if remote else 'local only'}")
+        u = st.get("usage") or {}
+        self.tile("storage", str(st.get("state", "?")).capitalize(), f"{gib(u['free'])} free" if u.get("free") is not None else str(st.get("message", ""))[:60])
+        ram = hw.get("ram") or {}
+        if ram.get("total"):
+            self.tile("ram", f"{gib(ram['total'] - ram['available'])} / {gib(ram['total'])}", f"{gib(ram['available'])} available")
+        v = (hw.get("sysfs_vram") or [None])[0]
+        self.tile("vram", f"{gib(v['vram_used'])} / {gib(v['vram_total'])}" if v else "No VRAM info", (v or {}).get("card", "CPU or shared memory"))
+
     # ---- Models
     def tab_models(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Models")
@@ -168,6 +247,9 @@ class App(tk.Tk):
         ttk.Button(row, text="Select for inference", command=self.select_model).pack(side="left", padx=3)
         ttk.Button(row, text="Remove", command=self.remove_model).pack(side="left", padx=3)
         ttk.Button(row, text="Reload list", command=self.load_models).pack(side="left", padx=3)
+        ttk.Button(row, text="Check integrity (hash)", command=self.hash_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Remember settings", command=lambda: self.bg(lambda: ctl("model", "remember", self._sel()),
+                                                                          lambda r: self.models_msg.set(f"remembered for this model: {r}"))).pack(side="left", padx=3)
         ttk.Label(f, text="Optional SHA-256 to verify:").pack(anchor="w"); self.sha = ttk.Entry(f); self.sha.pack(fill="x")
         s = ttk.LabelFrame(f, text="Inference settings", padding=6); s.pack(fill="x", pady=6)
         self.vars = {k: tk.StringVar() for k in ("backend", "ctx", "mem_limit_gb", "sleep_idle_minutes")}
@@ -189,6 +271,12 @@ class App(tk.Tk):
             for k in self.vars: self.vars[k].set(str(d["cfg"][k]))
             self.jinja.set(bool(d["cfg"]["jinja"])); self.models_msg.set(f"selected: {d['cfg']['model'] or '(none)'}")
         self.bg(lambda: {"models": ctl("model", "list"), "cfg": ctl("llama", "config")}, done)
+
+    def hash_model(self):
+        n = self._sel()
+        args = ["model", "hash", n] + (["--expected", self.sha.get().strip()] if self.sha.get().strip() else [])
+        self.bg(lambda: ctl(*args, timeout=7200), lambda r: self.models_msg.set(f"{n}: {r[n]['label']} {r[n].get('sha256', '')}"),
+                "hashing (reads the whole file)...")
 
     def _sel(self):
         i = self.model_list.curselection()
@@ -365,6 +453,9 @@ class App(tk.Tk):
         b = ttk.Frame(f); b.pack(fill="x")
         for t, fn in (("Rescan", self.scan), ("Use selected partition", self.use_sel), ("Temporary session (RAM only)", self.session)):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        b2 = ttk.Frame(f); b2.pack(fill="x", pady=4)
+        for t, fn in (("Storage health", self.health), ("Back up now...", self.backup), ("Restore...", self.restore)):
+            ttk.Button(b2, text=t, command=fn).pack(side="left", padx=2)
         self.stor_out = self.mkout(f); self.after(1200, self.scan)
 
     def scan(self):
@@ -374,6 +465,42 @@ class App(tk.Tk):
                 self.cand.insert("end", f"UUID {c['uuid']}  {c['size']/2**30:.1f} GiB  {c['model']} {c['serial']} ({c['transport']})")
             self.out(self.stor_out, f"{s['state']}: {s['message']}")
         self.bg(lambda: ctl("storage", "status"), done)
+
+    def health(self):
+        def show(r):
+            lines = [f"Overall: {r['status']}"]
+            lines += [f"{s['label']}: {s['pct_free']}% free ({s['free'] / 2**30:.1f} GiB) {s['fix']}" for s in r["space"]]
+            for d in r["smart"]:
+                lines += [f"{d['device']} {d.get('model', '')}: SMART {d['status']}"] + [f"  - {x['text']} {x['fix']}" for x in d["findings"]]
+            self.out(self.stor_out, "\n".join(lines))
+        self.bg(lambda: ctl("storage", "health", timeout=180), show, "checking drives...")
+
+    def _ask_pass(self, title, confirm=False):
+        from tkinter import simpledialog
+        p = simpledialog.askstring(title, "Backup passphrase (10+ characters):", show="*", parent=self)
+        if not p:
+            return None
+        if confirm and simpledialog.askstring(title, "Repeat the passphrase:", show="*", parent=self) != p:
+            messagebox.showerror(title, "The passphrases do not match."); return None
+        return p
+
+    def backup(self):
+        p = self._ask_pass("Encrypted backup", confirm=True)
+        if not p: return
+        sec = messagebox.askyesno("Encrypted backup", "Also include the API key and TLS keys? (No is safer.)", default="no")
+        args = ["backup", "create"] + (["--include-secrets"] if sec else [])
+        self.bg(lambda: ctl(*args, stdin=p + "\n", timeout=600), lambda r: self.out(self.stor_out, f"Encrypted backup saved: {r['path']} ({r['files']} files)"), "encrypting...")
+
+    def restore(self):
+        f = filedialog.askopenfilename(title="Choose a VictorLinux backup", filetypes=[("VictorLinux backup", "*.vlbak")])
+        if not f: return
+        p = self._ask_pass("Restore backup")
+        if not p: return
+        def checked(r):
+            self.out(self.stor_out, f"Verified backup from {r['created']}:\n" + "\n".join(x["path"] for x in r["files"]))
+            if messagebox.askyesno("Restore backup", f"Verified {len(r['files'])} files. Replace your current settings and chats? Current files are copied to a pre-restore folder first.", default="no"):
+                self.bg(lambda: ctl("backup", "restore", f, "--yes", stdin=p + "\n"), lambda x: self.out(self.stor_out, f"Restored {x['restored']} files. Previous copies: {x['previous_dir']}"), "restoring...")
+        self.bg(lambda: ctl("backup", "inspect", f, stdin=p + "\n"), checked, "verifying...")
 
     def use_sel(self):
         i = self.cand.curselection()
@@ -385,12 +512,46 @@ class App(tk.Tk):
             self.bg(lambda: ctl("storage", "session"), lambda r: self.scan())
 
     # ---- Diagnostics
+    def tab_docs(self):
+        """Ask your documents: only folders the owner adds; local index; answers from the local model only."""
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Documents")
+        q = ttk.Frame(f); q.pack(fill="x")
+        ttk.Label(q, text="Question:").pack(side="left")
+        self.doc_q = ttk.Entry(q); self.doc_q.pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(q, text="Ask", style="Accent.TButton", command=lambda: self.doc_run("ask")).pack(side="left", padx=2)
+        ttk.Button(q, text="Search only", command=lambda: self.doc_run("search")).pack(side="left", padx=2)
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        ttk.Button(b, text="Add folder...", command=self.doc_add).pack(side="left", padx=2)
+        ttk.Button(b, text="Index now", command=lambda: self.bg(lambda: ctl("docs", "index", timeout=3600), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)), "indexing...")).pack(side="left", padx=2)
+        ttk.Button(b, text="Folders", command=lambda: self.bg(lambda: ctl("docs", "list"), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)))).pack(side="left", padx=2)
+        self.doc_out = self.mkout(f)
+
+    def doc_add(self):
+        d = filedialog.askdirectory(title="Folder to index (only folders you choose are read)")
+        if d:
+            self.bg(lambda: ctl("docs", "add", d), lambda r: self.out(self.doc_out, f"Added {r['added']}. Press Index now."))
+
+    def doc_run(self, cmd):
+        q = self.doc_q.get().strip()
+        if not q:
+            return
+        def show(r):
+            parts = [r.get("answer") or r.get("message") or ""]
+            parts += [f"[{i + 1}] {h['path']}\n{h['text']}" for i, h in enumerate(r.get("hits", []))]
+            self.out(self.doc_out, "\n\n".join(p for p in parts if p) or "Nothing matches. Add a folder and index it.")
+        self.bg(lambda: ctl("docs", cmd, q, timeout=900), show, "thinking on this PC...")
+
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")
-        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+        for t, fn in (("Check this PC", self.pc_check), ("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
         self.diag_out = self.mkout(f)
+
+    def pc_check(self):
+        self.bg(lambda: ctl("diag", "check", timeout=180),
+                lambda r: self.out(self.diag_out, r["text"] + (f"\n\nSaved: {r['saved']['report']}" if (r.get("saved") or {}).get("report") else "")),
+                "checking this PC...")
 
     def diag(self):
         self.bg(lambda: ctl("diag", "show", timeout=180), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)), "collecting...")

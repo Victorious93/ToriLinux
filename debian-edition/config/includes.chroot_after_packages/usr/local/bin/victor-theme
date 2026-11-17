@@ -24,7 +24,9 @@ for version in ('gtk-3.0', 'gtk-4.0'):
 p = cfg / 'xfce4/terminal/terminalrc'
 c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
 if not c.has_section('Configuration'): c.add_section('Configuration')
-c['Configuration'].update({'ColorForeground': '#d8dee9', 'ColorBackground': '#1b1e26'})
+# VictorLinux brand palette: #0B0F1A background, cyan #00E5FF cursor/selection, magenta #FF2BD6 in the ANSI palette.
+c['Configuration'].update({'ColorForeground': '#e8eef9', 'ColorBackground': '#0b0f1a', 'ColorCursor': '#00e5ff',
+                           'ColorPalette': '#1d2740;#ff6b88;#3ee6a8;#ffc857;#5b8cff;#ff2bd6;#00e5ff;#e8eef9;#5a6a8f;#ff8fa6;#7af0c4;#ffd98a;#8fb0ff;#ff70e4;#6af0ff;#f5f8ff'})
 p.parent.mkdir(parents=True, exist_ok=True)
 with p.open('w') as f: c.write(f, space_around_delimiters=False)
 # Best effort: persistence may be missing or read-only. Preserve unrelated settings.

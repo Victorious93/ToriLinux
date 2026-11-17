@@ -49,4 +49,4 @@ Plain HTTP over a LAN is readable by anyone on the network. Prefer:
 * Health check: `GET /victor/health`; capabilities: `GET /victor/capabilities`
 * Model name: `victor-local` (llama.cpp ignores it, but it is accepted)
 
-This repository does not modify DroidCommand-AI and defines no pairing protocol; configure the URL and key manually.
+This repository does not modify DroidCommand-AI. Configure the URL and key manually, or use the opt-in *Pair phone* QR described in [API keys and phone pairing](api-keys-and-pairing.md).
