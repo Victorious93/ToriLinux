@@ -1,0 +1,21 @@
+# VictorLinux (Raspberry Pi edition) - Pi 5, Pi 4/400, Zero 2 W. arm64 kernel only.
+# The firmware picks kernel_2712.img on Pi 5 and kernel8.img on Pi 4 / Zero 2 W (both from raspi-firmware).
+arm_64bit=1
+auto_initramfs=1
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+disable_fw_kms_setup=1
+disable_overscan=1
+dtparam=audio=on
+camera_auto_detect=1
+display_auto_detect=1
+# Onboard Bluetooth stays on the PL011 UART (default); do NOT add disable-bt. Radios start soft-blocked:
+# Wi-Fi is unblocked when a Wi-Fi country is set, Bluetooth with 'victor-pi bluetooth on'.
+
+[pi4]
+arm_boost=1
+
+[cm4]
+otg_mode=1
+
+[all]

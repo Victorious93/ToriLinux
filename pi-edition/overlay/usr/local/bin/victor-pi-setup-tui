@@ -1,0 +1,48 @@
+#!/bin/bash
+# Headless first-boot setup on tty1 (pi-headless). Runs as root from victor-pi-setup-tty.service until the
+# owner account has a password. Login name is fixed to "victor" (the shared VictorLinux tools expect it).
+set -uo pipefail
+PRIV=/usr/local/lib/victorlinux/pi/victor-pi-priv
+VPRIV=/usr/local/lib/victorlinux/victor-priv
+[ "$("$PRIV" setup-status)" = done ] && exit 0
+export NEWT_COLORS='root=cyan,black window=white,black border=cyan,black title=magenta,black button=black,cyan actbutton=black,magenta entry=white,black textbox=white,black'
+T="VictorLinux (Raspberry Pi) first-boot setup"
+w() { whiptail --title "$T" "$@" 3>&1 1>&2 2>&3; }
+w --msgbox "Welcome. There is no default password.\n\nThis sets up the owner account (login: victor), your Wi-Fi country, optional Wi-Fi network and optional SSH keys.\n\nSSH stays OFF unless you turn it on here (key-only)." 14 70
+name="$(w --inputbox "Your full name (optional):" 9 70 "")" || name=""
+[ -n "$name" ] && "$PRIV" full-name "$name"
+while :; do
+  p1="$(w --passwordbox "Owner password for login 'victor' (min 8 characters):" 9 70)" || continue
+  p2="$(w --passwordbox "Repeat the password:" 9 70)" || continue
+  if [ "$p1" != "$p2" ] || [ "${#p1}" -lt 8 ]; then w --msgbox "Passwords must match and be at least 8 characters." 8 60; continue; fi
+  if out="$(printf '%s\n' "$p1" | "$VPRIV" set-password 2>&1)"; then break; fi
+  w --msgbox "Could not set the password: $out" 10 70
+done
+unset p1 p2
+while :; do
+  cc="$(w --inputbox "Wi-Fi country (2-letter ISO code, e.g. US, GB, DE). Wi-Fi stays blocked until this is set:" 10 70 "US")" || { cc=""; break; }
+  cc="${cc^^}"; "$PRIV" wifi-country "$cc" >/dev/null 2>&1 && break
+  w --msgbox "'$cc' is not a valid 2-letter country code." 8 60
+done
+if [ -n "$cc" ] && w --yesno "Connect to a Wi-Fi network now?" 8 60; then
+  ssid="$(w --inputbox "Wi-Fi network name (SSID):" 9 70)" || ssid=""
+  if [ -n "$ssid" ]; then
+    psk="$(w --passwordbox "Wi-Fi passphrase (8-63 characters):" 9 70)" || psk=""
+    msg="$(printf '%s\n' "$psk" | "$PRIV" wifi-connect "$ssid" 2>&1)"; unset psk
+    w --msgbox "$msg" 10 70
+  fi
+fi
+if w --yesno "Add SSH public keys now? (Paste one key per line; they are kept on the data partition too.)" 9 70; then
+  keys="$(w --inputbox "Paste an SSH public key (ssh-ed25519 AAAA... you@host):" 10 78)" || keys=""
+  if [ -n "$keys" ] && msg="$(printf '%s\n' "$keys" | "$PRIV" ssh-keys 2>&1)"; then
+    w --msgbox "$msg" 9 70
+    if w --yesno "Turn SSH on now (key-only, password login disabled)?" 8 60; then
+      msg="$("$VPRIV" ssh-enable /home/victor/.ssh/authorized_keys 0.0.0.0 2>&1)"; w --msgbox "$msg" 9 70
+    fi
+  else
+    [ -n "$keys" ] && w --msgbox "Key rejected: ${msg:-invalid}" 9 70
+  fi
+fi
+"$PRIV" mark-done >/dev/null
+w --msgbox "Setup complete. Log in as 'victor'.\n\nTry: victor-pi status   |   victor-ctl --help" 10 60
+exit 0

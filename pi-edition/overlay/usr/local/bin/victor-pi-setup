@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""VictorLinux (Raspberry Pi) first-boot setup screen: owner password, name, Wi-Fi country/network, SSH keys.
+
+Runs as the owner (autostart in pi-desktop) until setup is done. Privileged steps go through the two validated
+helpers only (victor-priv, victor-pi-priv). Login name stays 'victor' because the shared tools expect it."""
+import os, subprocess, sys, tempfile, tkinter as tk
+from tkinter import messagebox, ttk
+sys.path.insert(0, "/usr/local/lib/victorlinux/pi")
+import victorpi
+
+PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
+PIPRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/pi/victor-pi-priv"]
+BG, PANEL, FG, CYAN, MAGENTA = "#0B0F1A", "#111727", "#EDF2FA", "#00E5FF", "#FF2BD6"
+
+
+def call(cmd, data=None):
+    r = subprocess.run(cmd, input=data, capture_output=True, text=True)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def main():
+    if call([*PIPRIV, "setup-status"])[1] == "done":
+        return 0
+    root = tk.Tk(); root.title("VictorLinux setup"); root.configure(bg=BG)
+    root.option_add("*background", BG); root.option_add("*foreground", FG)
+    root.option_add("*insertBackground", CYAN); root.option_add("*selectBackground", MAGENTA)
+    st = ttk.Style(root); st.theme_use("clam")
+    st.configure(".", background=BG, foreground=FG, fieldbackground=PANEL, bordercolor=CYAN)
+    st.configure("TButton", padding=(14, 8), background=PANEL, foreground=CYAN)
+    st.map("TButton", background=[("active", MAGENTA)], foreground=[("active", BG)])
+    st.configure("Title.TLabel", foreground=CYAN, font=("DejaVu Sans", 16, "bold"))
+    st.configure("Note.TLabel", foreground="#9AA7C0")
+    f = ttk.Frame(root, padding=16); f.pack(fill="both", expand=True)
+    ttk.Label(f, text="Welcome to VictorLinux on Raspberry Pi", style="Title.TLabel").grid(columnspan=2, sticky="w")
+    ttk.Label(f, style="Note.TLabel", wraplength=520, text="There is no default password. Login name: victor. "
+              "SSH stays off unless you turn it on below (key-only).").grid(columnspan=2, sticky="w", pady=(0, 10))
+    v = {k: tk.StringVar() for k in ("name", "p1", "p2", "cc", "ssid", "psk")}
+    v["cc"].set("US"); ssh_on = tk.BooleanVar(value=False)
+    rows = [("Full name (optional)", "name", None), ("Password (min 8)", "p1", "*"), ("Repeat password", "p2", "*"),
+            ("Wi-Fi country", "cc", None), ("Wi-Fi network (optional)", "ssid", None), ("Wi-Fi passphrase", "psk", "*")]
+    for i, (lab, k, show) in enumerate(rows, start=2):
+        ttk.Label(f, text=lab).grid(row=i, column=0, sticky="w", pady=3)
+        if k == "cc":
+            w = ttk.Combobox(f, textvariable=v[k], values=victorpi.COMMON_COUNTRIES, width=8)
+        else:
+            w = ttk.Entry(f, textvariable=v[k], show=show or "", width=40)
+        w.grid(row=i, column=1, sticky="we", pady=3)
+    ttk.Label(f, text="SSH public keys (optional, one per line)").grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 2))
+    keys = tk.Text(f, height=4, width=60, bg=PANEL, fg=FG, insertbackground=CYAN, relief="flat",
+                   highlightthickness=1, highlightbackground=CYAN)
+    keys.grid(row=9, column=0, columnspan=2, sticky="we")
+    ttk.Checkbutton(f, text="Turn SSH on now (key-only)", variable=ssh_on).grid(row=10, column=0, columnspan=2, sticky="w", pady=6)
+
+    def save():
+        p1, p2, cc = v["p1"].get(), v["p2"].get(), v["cc"].get().strip().upper()
+        kt = keys.get("1.0", "end").strip()
+        if p1 != p2 or len(p1) < 8:
+            return messagebox.showerror("Password", "Passwords must match and be at least 8 characters.")
+        if not victorpi.valid_country(cc):
+            return messagebox.showerror("Wi-Fi country", "Enter a 2-letter country code such as US.")
+        if ssh_on.get() and not kt:
+            return messagebox.showerror("SSH", "Turning SSH on needs at least one public key.")
+        steps = []
+        rc, out = call([*PRIV, "set-password"], p1 + "\n")
+        if rc:
+            return messagebox.showerror("Password", out)
+        if v["name"].get().strip():
+            steps.append(call([*PIPRIV, "full-name", v["name"].get().strip()]))
+        steps.append(call([*PIPRIV, "wifi-country", cc]))
+        if v["ssid"].get().strip():
+            steps.append(call([*PIPRIV, "wifi-connect", v["ssid"].get().strip()], v["psk"].get() + "\n"))
+        if kt:
+            rc, out = call([*PIPRIV, "ssh-keys"], kt + "\n"); steps.append((rc, out))
+            if rc == 0 and ssh_on.get():
+                with tempfile.NamedTemporaryFile("w", dir=os.path.expanduser("~"), delete=False) as t:
+                    t.write(kt + "\n")
+                steps.append(call([*PRIV, "ssh-enable", t.name, "0.0.0.0"])); os.unlink(t.name)
+        call([*PIPRIV, "mark-done"])
+        msg = "\n".join(o for _, o in steps if o) or "Done."
+        bad = [o for rc, o in steps if rc]
+        (messagebox.showwarning if bad else messagebox.showinfo)("Setup", msg)
+        root.destroy()
+
+    ttk.Button(f, text="Save and finish", command=save).grid(row=11, column=1, sticky="e", pady=(8, 0))
+    f.columnconfigure(1, weight=1)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

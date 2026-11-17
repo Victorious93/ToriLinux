@@ -1,0 +1,11 @@
+# Optional setup WITHOUT a screen (e.g. Pi Zero 2 W). Copy to victor-firstboot.conf on this FAT partition,
+# fill it in, then boot. It is applied once and then overwritten and deleted. Nothing is applied if any line is invalid
+# (the reason is saved to /var/lib/victorlinux/firstboot-errors.txt).
+# Plain passwords are refused. Make a hash on another computer:  openssl passwd -6
+#FULL_NAME=Your Name
+#PASSWORD_HASH=$6$...
+#WIFI_COUNTRY=US
+#WIFI_SSID=YourNetwork
+#WIFI_PSK=your-passphrase
+#SSH_AUTHORIZED_KEY=ssh-ed25519 AAAA... you@laptop
+#SSH_ENABLE=no
