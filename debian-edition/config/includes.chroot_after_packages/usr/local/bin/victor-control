@@ -117,7 +117,7 @@ class App(tk.Tk):
             ttk.Label(card, textvariable=sub, style="TileSub.TLabel", wraplength=140).pack(anchor="w")
             self.tiles[key] = (v, sub)
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
-        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_diag()
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_docs(); self.tab_diag()
         self.after(500, self.refresh)
 
     # ---- helpers
@@ -473,6 +473,35 @@ class App(tk.Tk):
             self.bg(lambda: ctl("storage", "session"), lambda r: self.scan())
 
     # ---- Diagnostics
+    def tab_docs(self):
+        """Ask your documents: only folders the owner adds; local index; answers from the local model only."""
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Documents")
+        q = ttk.Frame(f); q.pack(fill="x")
+        ttk.Label(q, text="Question:").pack(side="left")
+        self.doc_q = ttk.Entry(q); self.doc_q.pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(q, text="Ask", style="Accent.TButton", command=lambda: self.doc_run("ask")).pack(side="left", padx=2)
+        ttk.Button(q, text="Search only", command=lambda: self.doc_run("search")).pack(side="left", padx=2)
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        ttk.Button(b, text="Add folder...", command=self.doc_add).pack(side="left", padx=2)
+        ttk.Button(b, text="Index now", command=lambda: self.bg(lambda: ctl("docs", "index", timeout=3600), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)), "indexing...")).pack(side="left", padx=2)
+        ttk.Button(b, text="Folders", command=lambda: self.bg(lambda: ctl("docs", "list"), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)))).pack(side="left", padx=2)
+        self.doc_out = self.mkout(f)
+
+    def doc_add(self):
+        d = filedialog.askdirectory(title="Folder to index (only folders you choose are read)")
+        if d:
+            self.bg(lambda: ctl("docs", "add", d), lambda r: self.out(self.doc_out, f"Added {r['added']}. Press Index now."))
+
+    def doc_run(self, cmd):
+        q = self.doc_q.get().strip()
+        if not q:
+            return
+        def show(r):
+            parts = [r.get("answer") or r.get("message") or ""]
+            parts += [f"[{i + 1}] {h['path']}\n{h['text']}" for i, h in enumerate(r.get("hits", []))]
+            self.out(self.doc_out, "\n\n".join(p for p in parts if p) or "Nothing matches. Add a folder and index it.")
+        self.bg(lambda: ctl("docs", cmd, q, timeout=900), show, "thinking on this PC...")
+
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")

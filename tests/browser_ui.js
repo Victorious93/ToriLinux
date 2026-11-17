@@ -12,6 +12,11 @@ const env = {...process.env, HOME: tmp, XDG_CACHE_HOME: tmp + '/cache',
   VICTOR_DATA: tmp + '/data', VICTOR_RUN_DIR: tmp + '/run', VICTOR_CC_PORT: '18788',
    VICTOR_FLEET_DIR: tmp + '/fleet', VICTOR_FLEET_BIN: path.resolve(__dirname, '..', 'fleet/bin/victor-fleet'), VICTOR_FLEET_LIB: path.resolve(__dirname, '..', 'fleet')};
 fs.mkdirSync(tmp + '/data/models', {recursive: true});
+fs.mkdirSync(tmp + '/notes', {recursive: true});
+fs.writeFileSync(tmp + '/notes/lease.md', '# Lease\n\nPets: one cat is allowed with a deposit of 300 dollars.\n');
+fs.writeFileSync(tmp + '/notes/recipe.txt', 'Bread needs flour, water, salt and yeast.');
+
+
 // Smallest valid GGUF v3 (no tensors, no metadata) so the model library has a real file to hash.
 const ggufHeader = Buffer.alloc(24); ggufHeader.write('GGUF', 0); ggufHeader.writeUInt32LE(3, 4);
 fs.writeFileSync(tmp + '/data/models/tiny-Q4_K_M.gguf', Buffer.concat([ggufHeader, Buffer.alloc(64 * 1024)]));
@@ -39,7 +44,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }}));
   await page.goto('http://127.0.0.1:18788/#t=' + token);
   await page.waitForFunction(() => !['storage…', 'storage...'].includes(document.querySelector('#storagePill').textContent));
-  assert.equal(await page.locator('#nav button').count(), 6);
+  assert.equal(await page.locator('#nav button').count(), 7);
   const csp = (await page.request.get('http://127.0.0.1:18788/')).headers()['content-security-policy'];
   assert.match(csp, /script-src[^;]*nonce-/);
   assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
@@ -54,6 +59,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.click('#fStop'); await sleep(1500); await page.click('#fRef');
   await page.waitForFunction(() => /stopped/i.test(document.getElementById('fOut').textContent));
   console.log('PASS fleet tab start/pair/stop');
+  // Documents: refuse system folders, add a chosen folder, index locally, ask without a model -> cited passages only.
+  await page.locator('[data-t="docs"]').click();
+  await page.waitForFunction(() => /No folders yet/.test(document.getElementById('dSrc').textContent));
+  await page.fill('#dPath', '/etc'); await page.click('#bDocAdd');
+  await page.waitForFunction(() => /system or private/.test(document.getElementById('toast').textContent));
+  await page.fill('#dPath', tmp + '/cache/victorlinux'); await page.click('#bDocAdd');
+  await page.waitForFunction(() => document.getElementById('toast').textContent.split('system or private').length > 2);
+  await page.fill('#dPath', tmp + '/notes'); await page.click('#bDocAdd');
+  await page.waitForFunction(() => /notes/.test(document.getElementById('dSrc').textContent));
+  assert.equal(await page.locator('#dSrc [data-docrm]').count(), 1);
+  await page.click('#bDocIndex');
+  await page.waitForFunction(() => /Indexed: 2 new or changed/.test(document.getElementById('dJob').textContent), null, {timeout: 15000});
+  assert.match(await page.locator('#dJob').innerText(), /keyword only/);
+  await page.fill('#dQ', 'Is a cat allowed as a pet?'); await page.click('#bAsk');
+  await page.waitForSelector('#dHits .hit');
+  assert.match(await page.locator('#dHits .hit').first().innerText(), /lease\.md/);
+  assert.match(await page.locator('#dAnswer').innerText(), /Start a model/);
+  if (process.env.VICTOR_SHOTS_DIR) { fs.mkdirSync(process.env.VICTOR_SHOTS_DIR, {recursive: true});
+   await page.screenshot({path: path.join(process.env.VICTOR_SHOTS_DIR, 'documents-1366.png'), fullPage: true}); }
+  console.log('PASS documents tab: refuses /etc and the session-token folder, indexes a chosen folder, cites passages offline');
   await page.locator('[data-t="remote"]').click();
   await page.locator('#rEn').check(); await page.locator('#rTls').check();
   await page.locator('#rBind').fill('100.64.0.9'); await page.locator('#rPort').fill('9090');
@@ -136,7 +161,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 15, 26)');
   assert.equal(await page.locator('#bDs').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 229, 255)');
   assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--mag').trim().toLowerCase()), '#ff2bd6');
-  for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
+  for (const tab of ['dash', 'models', 'docs', 'storage', 'remote', 'fleet', 'logs']) {
    await page.locator(`[data-t="${tab}"]`).click();
    const light = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(el => el.offsetParent !== null || el.tagName === 'HEADER').map(el => {
      const m = getComputedStyle(el).backgroundColor.match(/[\d.]+/g) || []; const [r, g, b, a = 1] = m.map(Number);
@@ -179,7 +204,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    fs.mkdirSync(process.env.VICTOR_SHOTS_DIR, {recursive: true});
    for (const [width, height] of [[1366, 900], [390, 844]]) {
     await page.setViewportSize({width, height});
-    for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
+    for (const tab of ['dash', 'models', 'docs', 'storage', 'remote', 'fleet', 'logs']) {
      await page.locator(`[data-t="${tab}"]`).click(); await sleep(250);
      await page.screenshot({path: path.join(process.env.VICTOR_SHOTS_DIR, `control-center-${tab}-${width}.png`), fullPage: true});
     }
@@ -191,7 +216,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }
   for (const width of [1366, 768, 390]) {
    await page.setViewportSize({width, height: 900});
-   for (const tab of ['dash', 'models', 'storage', 'remote', 'fleet', 'logs']) {
+   for (const tab of ['dash', 'models', 'docs', 'storage', 'remote', 'fleet', 'logs']) {
     await page.locator(`[data-t="${tab}"]`).click();
     assert.equal(await page.locator(`#t-${tab}`).isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,

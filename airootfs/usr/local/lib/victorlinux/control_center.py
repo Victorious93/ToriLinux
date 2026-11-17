@@ -26,15 +26,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
+import docchat  # noqa: E402
 import pccheck  # noqa: E402
-
-
 import modellib  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
 CC_PORT = int(os.environ.get("VICTOR_CC_PORT", "8787"))
 UPSTREAM_PORT = 18081
+EMBED_PORT = 18082          # optional second llama-server with --embeddings, loopback only
 HOME = os.path.expanduser("~")
 TOKEN_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "victorlinux", "cc.token")
 
@@ -88,6 +88,10 @@ class App:
         self.gw = Proc("gateway")
         self.svc = {k: Proc(k) for k in SERVICES}
         self.import_job = {"state": "idle"}
+        self.emb = Proc("embed")
+        self.doc_job = docchat.IndexJob()
+
+
         self.hash_job = None
         self.llm_info = {}
         self.token = pysecrets.token_urlsafe(32)
@@ -182,6 +186,145 @@ class App:
             s["upstream_key"] = pysecrets.token_urlsafe(32)
             tc.save_secrets(s)
         return s["upstream_key"]
+
+    # ------------------------------------------------------------- docs --
+    def doc_index(self):
+        p = tc.data_path("docs", "index.sqlite")
+        return docchat.Index(p) if p else None
+
+    def doc_config(self):
+        try:
+            with open(tc.data_path("docs", "config.json")) as f:
+                c = json.load(f)
+            return c if isinstance(c, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def doc_private_paths(self):
+        """Never indexed: VictorLinux settings/secrets/TLS/state, the session token, SSH and GPG keys."""
+        out = [os.path.dirname(TOKEN_FILE), os.path.join(HOME, ".ssh"), os.path.join(HOME, ".gnupg")]
+        for part in ("secrets", "settings", "server", "docs", "backups"):
+            q = tc.data_path(part)
+            if q:
+                out.append(q)
+        try:
+            out.append(os.path.dirname(tc.secrets_path()))
+        except Exception:  # noqa: BLE001
+            pass
+        return [x for x in out if x]
+
+    def start_embedder(self, model):
+        with self.lock:
+            if not self.emb.running():
+                avail = tc.backends()
+                binary = avail.get("cpu") or next((v for v in avail.values() if v), None)
+                if not binary:
+                    return {"ok": False, "error": "No llama-server build in this image."}
+                cmd = [binary, "-m", model, "--host", "127.0.0.1", "--port", str(EMBED_PORT), "--embeddings", "-c", "2048",
+                       "-ngl", "0", "--api-key", self.ensure_upstream_key(), "--alias", "victor-embed",
+                       "-t", str(hostplan.default_threads())]
+                self.spawn(self.emb, cmd, env={"LD_LIBRARY_PATH": os.path.dirname(binary)})
+        import urllib.request
+        for _ in range(90):
+            if not self.emb.running():
+                return {"ok": False, "error": "Embedding server exited. See the 'embed' log."}
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{EMBED_PORT}/health", timeout=2) as r:
+                    if r.status == 200:
+                        return {"ok": True}
+            except OSError:
+                pass
+            time.sleep(1)
+        return {"ok": False, "error": "Embedding server did not become ready within 90 s."}
+
+    def embedder(self, start=True):
+        """Local embeddings only: the chosen embedding GGUF, else the chat server if it serves /v1/embeddings, else none."""
+        model = self.doc_config().get("embed_model")
+        if model and os.path.isfile(model):
+            if not self.emb.running():
+                if not start:
+                    return None, None
+                r = self.start_embedder(model)
+                if not r.get("ok"):
+                    raise RuntimeError(r["error"])
+            return docchat.Embedder(f"http://127.0.0.1:{EMBED_PORT}", self.ensure_upstream_key()), os.path.basename(model)
+        if self.llm.running():
+            e = docchat.Embedder(f"http://127.0.0.1:{UPSTREAM_PORT}", self.ensure_upstream_key(), timeout=30)
+            try:
+                e.embed(["probe"])
+                return e, os.path.basename(self.llm_info.get("model") or "chat-model")
+            except (OSError, ValueError):
+                return None, None
+        return None, None
+
+    def docs_status(self):
+        idx = self.doc_index()
+        if not idx:
+            return {"error": "Choose storage first. The document index is kept on your storage drive."}
+        c = self.doc_config()
+        return {"sources": idx.sources(), "stats": idx.stats(), "job": dict(self.doc_job.state),
+                "embed": {"model": c.get("embed_model") or "", "running": self.emb.running()},
+                "llm_running": self.llm.running(), "pdf": bool(shutil.which("pdftotext"))}
+
+    def docs_action(self, b):
+        idx = self.doc_index()
+        if not idx:
+            return 400, {"error": "Choose storage first."}
+        act = b.get("action")
+        if act == "add":
+            try:
+                p = idx.add_source(str(b.get("path", "")), self.doc_private_paths())
+            except docchat.DocError as e:
+                return 400, {"error": str(e)}
+            return 200, {"ok": True, "path": p, "message": f"Added {p}. Press Index now to read it."}
+        if act == "remove":
+            n = idx.remove_source(str(b.get("path", "")))
+            return 200, {"ok": True, "message": f"Removed from the index ({n} files). Your files were not touched."}
+        if act == "index":
+            if self.doc_job.running():
+                return 409, {"error": "Indexing is already running."}
+            self.doc_job.start(idx, lambda: self.embedder(start=True), exclude=self.doc_private_paths())
+            return 200, {"ok": True, "job": dict(self.doc_job.state)}
+        if act == "cancel":
+            self.doc_job.cancel.set()
+            return 200, {"ok": True}
+        if act == "set-embed":
+            m = str(b.get("model") or "")
+            if m and m not in [x["path"] for x in tc.list_models(tc.load_settings()["extra_model_dirs"])]:
+                return 400, {"error": "The embedding model must be inside a configured model directory."}
+            p = tc.data_path("docs", "config.json")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tc.atomic_write(p, json.dumps(self.doc_config() | {"embed_model": m}), 0o600)
+            self.stop(self.emb)
+            return 200, {"ok": True, "message": "Embedding model saved. Re-index to compute vectors." if m else "Keyword search only."}
+        if act in ("ask", "search"):
+            q = str(b.get("question", "")).strip()
+            if not q:
+                return 400, {"error": "Type a question."}
+            if len(q) > 2000:
+                return 400, {"error": "Question too long (2000 characters max)."}
+            try:
+                emb, _ = self.embedder(start=False)
+            except RuntimeError:
+                emb = None
+            k = max(1, min(12, int(b.get("k") or 6)))
+            hits = idx.search(q, k=k, embedder=emb)
+            res = {"ok": True, "hits": [{"path": h["path"], "name": os.path.basename(h["path"]), "text": h["text"][:900],
+                                          "score": h["score"], "mode": h["mode"]} for h in hits]}
+            if not hits:
+                res["message"] = "Nothing in your indexed documents matches. Add a folder or re-index."
+                return 200, res
+            if act == "search":
+                return 200, res
+            if not self.llm.running():
+                res["message"] = "Start a model to get a written answer. These are the matching passages from your documents."
+                return 200, res
+            try:
+                res["answer"] = docchat.answer(q, hits, f"http://127.0.0.1:{UPSTREAM_PORT}", self.ensure_upstream_key())
+            except (OSError, ValueError, KeyError) as e:
+                res["message"] = f"The local model did not answer ({type(e).__name__}). Matching passages are shown."
+            return 200, res
+        return 400, {"error": "unknown documents action"}
 
     def llama_flags(self, binary):
         try:
@@ -710,13 +853,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                         "disk": shutil.disk_usage(os.path.dirname(path)).free})
             if u.path == "/api/logs":
                 name = q.get("name", ["llama"])[0]
-                if name not in ("llama", "gateway") + tuple(SERVICES):
+                if name not in ("llama", "gateway", "embed") + tuple(SERVICES):
                     return self._send(400, {"error": "unknown log"})
                 return self._send(200, {"log": APP.tail(name, int(q.get("n", ["300"])[0]))})
             if u.path == "/api/fleet":
                 st = APP.fleet(["status"])
                 st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
                 return self._send(200, st)
+            if u.path == "/api/docs":
+                r = APP.docs_status()
+                return self._send(400 if "error" in r else 200, r)
+
+
             if u.path == "/api/pccheck":
                 return self._send(200, APP.pc_check())
             if u.path == "/api/diagnostics":
@@ -774,6 +922,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/docs":
+                return self._send(*APP.docs_action(b))
+
+
             if p == "/api/pccheck/speed":
                 r = APP.speed_test()
                 return self._send(400 if "error" in r else 200, r)
@@ -949,6 +1101,7 @@ def main():
 
     def bye(*_):
         APP.stop_llm()
+        APP.stop(APP.emb)
         for p in APP.svc.values():
             APP.stop(p)
         os._exit(0)
