@@ -53,6 +53,9 @@ strace
 sudo
 syslinux
 usbutils
+# Bluetooth stack for optional phone-as-keyboard. The service stays disabled at boot.
+bluez
+bluez-utils
 # Phone mirroring (scrcpy is GUI-only below). adb/fastboot and udev rules.
 android-tools
 android-udev
@@ -104,6 +107,8 @@ xorg
 xorg-xinit
 # Phone mirroring (optional at runtime; image still works if later removed)
 scrcpy
+# Optional Bluetooth manager. Autostart is not enabled; Bluetooth stays off by default.
+blueman
 # Tk runtime for the VictorLinux Phone GUI (python is already in the base list)
 tk
 {% endif %}

@@ -5,6 +5,7 @@ sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
 from victorlib import hw, storage, models, llama, api, bench, kali, diag, pccheck, modellib, docchat
 from victorlib import diskhealth, vbackup
+import victorinput
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -259,6 +260,13 @@ def main():
     dg = g("diag", "show", "save-log", "check")
     dg["check"].add_argument("--no-save", action="store_true")
     g("versions", "show")
+    inn = g("input", "status", "enable", "disable", "pair-start", "pair-cancel", "revoke")
+    inn["enable"].add_argument("--bind", default="0.0.0.0")
+    inn["enable"].add_argument("--port", default=str(victorinput.DEFAULT_PORT))
+    inn["pair-start"].add_argument("--host", required=True)
+    inn["revoke"].add_argument("id")
+    bt = g("bluetooth", "status", "start", "confirm", "cancel", "list", "unpair")
+    bt["unpair"].add_argument("mac")
     a = ap.parse_args()
     try:
         if a.grp == "storage":
@@ -341,6 +349,51 @@ def main():
             out(a, docs_cmd(a))
         elif a.grp == "versions":
             out(a, diag.collect()["image_facts"] | diag.collect()["llama_build"])
+        elif a.grp == "input":
+            if a.cmd == "status":
+                st = victorinput.default_off_status()
+                try:
+                    raw = priv("input-status")
+                    st.update(json.loads(raw) if raw.startswith("{") else {"detail": raw})
+                except Exception:
+                    pass
+                root = os.environ.get("VICTOR_INPUT_DIR") or "/var/lib/victorlinux/input"
+                try:
+                    sec = victorinput.load_secrets(root)
+                    st["devices"] = victorinput.listing(sec)
+                    st["pairing"] = victorinput.pairing_state(sec)
+                except OSError:
+                    pass
+                st["firewall_note"] = victorinput.firewall_note(st.get("bind") or "0.0.0.0", st.get("port") or victorinput.DEFAULT_PORT)
+                out(a, st)
+            elif a.cmd == "enable":
+                out(a, json.loads(priv("input-enable", a.bind, str(a.port))))
+            elif a.cmd == "disable":
+                out(a, json.loads(priv("input-disable")))
+            elif a.cmd == "pair-start":
+                app = victorinput.InputApp(os.environ.get("VICTOR_INPUT_DIR") or "/var/lib/victorlinux/input",
+                                           sink=victorinput.MemorySink())
+                out(a, app.start_pairing_uri(a.host))
+            elif a.cmd == "pair-cancel":
+                root = os.environ.get("VICTOR_INPUT_DIR") or "/var/lib/victorlinux/input"
+                sec = victorinput.load_secrets(root)
+                victorinput.cancel_pairing(sec)
+                victorinput.save_secrets(sec, root)
+                out(a, {"ok": True, "message": "Pairing window closed."})
+            elif a.cmd == "revoke":
+                root = os.environ.get("VICTOR_INPUT_DIR") or "/var/lib/victorlinux/input"
+                sec = victorinput.load_secrets(root)
+                n = victorinput.revoke(sec, a.id)
+                victorinput.save_secrets(sec, root)
+                out(a, {"ok": True, "revoked": n})
+        elif a.grp == "bluetooth":
+            verb = {"status": "bt-status", "start": "bt-start", "confirm": "bt-confirm",
+                    "cancel": "bt-cancel", "list": "bt-list"}[a.cmd] if a.cmd != "unpair" else "bt-unpair"
+            raw = priv(verb, a.mac) if a.cmd == "unpair" else priv(verb)
+            try:
+                out(a, json.loads(raw))
+            except ValueError:
+                out(a, raw)
     except VictorError as e:
         print(f"ERROR: {e}", file=sys.stderr); sys.exit(2)
 

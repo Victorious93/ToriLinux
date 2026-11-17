@@ -259,10 +259,101 @@ def cmd_smart(dev):
         die(str(e))
 
 
+INPUT_ENV = "/etc/default/victor-input"
+INPUT_UNIT = "victor-input.service"
+
+
+def cmd_input_enable(bind, port):
+    if not port.isdigit() or not 1024 <= int(port) <= 65535:
+        die("port must be 1024-65535")
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(bind)
+    except ValueError:
+        if bind not in ("0.0.0.0", "::"):
+            die("bind must be an IP address")
+        ip = None
+    os.makedirs(os.path.dirname(INPUT_ENV), exist_ok=True)
+    with open(INPUT_ENV, "w") as f:
+        f.write(f"VICTOR_INPUT_BIND={bind}\nVICTOR_INPUT_PORT={port}\n")
+    os.chmod(INPUT_ENV, 0o644)
+    r = run(["systemctl", "start", INPUT_UNIT])
+    if r.returncode != 0:
+        die("victor-input failed to start: " + (r.stderr or r.stdout).strip())
+    loopback = ip is not None and ip.is_loopback
+    if not loopback:
+        _fw_open(port)
+    print(json.dumps({"ok": True, "running": True, "bind": bind, "port": int(port), "enabled_on_boot": False,
+                      "firewall_note": "TCP %s is open in nftables only while this service is on." % port}))
+
+
+def _fw_open(port):
+    r = run(["nft", "add", "element", *NFT_TABLE, "allowed_tcp", f"{{ {int(port)} }}"])
+    if r.returncode:
+        die("nft failed: " + r.stderr.strip())
+
+
+def _fw_close(port):
+    run(["nft", "delete", "element", *NFT_TABLE, "allowed_tcp", f"{{ {int(port)} }}"])
+
+
+def _input_port():
+    try:
+        for line in open(INPUT_ENV):
+            if line.startswith("VICTOR_INPUT_PORT="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "8473"
+
+
+def cmd_input_disable():
+    run(["systemctl", "stop", INPUT_UNIT])
+    _fw_close(_input_port())
+    print(json.dumps({"ok": True, "running": False, "message": "Wi-Fi input is off and the firewall port is closed."}))
+
+
+def cmd_input_status():
+    active = run(["systemctl", "is-active", INPUT_UNIT]).stdout.strip()
+    enabled = run(["systemctl", "is-enabled", INPUT_UNIT]).stdout.strip()
+    print(json.dumps({"running": active == "active", "boot": enabled, "default_off": True, "port": int(_input_port())}))
+
+
+def _bt(args):
+    r = run(["/usr/local/bin/victor-bt-pair", *args], timeout=30)
+    if r.returncode != 0:
+        die((r.stderr or r.stdout).strip() or "victor-bt-pair failed")
+    print(r.stdout, end="" if r.stdout.endswith("\n") else "\n")
+
+
+def cmd_bt_start():
+    _bt(["start"])
+
+
+def cmd_bt_confirm():
+    _bt(["confirm"])
+
+
+def cmd_bt_cancel():
+    _bt(["cancel"])
+
+
+def cmd_bt_status():
+    _bt(["status"])
+
+
+def cmd_bt_list():
+    _bt(["list"])
+
+
+def cmd_bt_unpair(mac):
+    _bt(["unpair", mac])
+
+
 VERBS = {"storage-mount": (cmd_mount, 1), "storage-auto": (cmd_auto, 0), "storage-session": (cmd_session, 0),
          "storage-check": (cmd_check, 0), "storage-repair": (cmd_repair, 0), "fw-sync": (cmd_fw_sync, 3),
          "set-password": (cmd_password, 0), "ssh-enable": (cmd_ssh_enable, 2), "revoke": (cmd_revoke, 0),
-         "reset-owner": (cmd_reset_owner, 0), "owner-status": (cmd_owner_status, 0), "access-apply": (cmd_access_apply, 0), "smart": (cmd_smart, 1)}
+         "reset-owner": (cmd_reset_owner, 0), "owner-status": (cmd_owner_status, 0), "access-apply": (cmd_access_apply, 0), "smart": (cmd_smart, 1), "input-enable": (cmd_input_enable, 2), "input-disable": (cmd_input_disable, 0), "input-status": (cmd_input_status, 0), "bt-start": (cmd_bt_start, 0), "bt-confirm": (cmd_bt_confirm, 0), "bt-cancel": (cmd_bt_cancel, 0), "bt-status": (cmd_bt_status, 0), "bt-list": (cmd_bt_list, 0), "bt-unpair": (cmd_bt_unpair, 1)}
 
 if __name__ == "__main__":
     if os.geteuid() != 0:

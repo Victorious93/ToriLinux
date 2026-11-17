@@ -39,9 +39,16 @@ C
 
 # --- services: nothing AI-related starts at boot; SSH off until configured by the owner
 systemctl disable ssh.service ssh.socket 2>/dev/null || true
+# Bluetooth and the Wi-Fi input receiver stay off until the owner turns them on.
+systemctl disable bluetooth.service 2>/dev/null || true
+systemctl disable victor-input.service 2>/dev/null || true
 systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer fstrim.timer 2>/dev/null || true
 systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
 systemctl enable nftables.service victor-storage.service victor-access.service 2>/dev/null || true
+# blueman would otherwise auto-start and may power the adapter on login.
+if [ -f /etc/xdg/autostart/blueman.desktop ]; then
+  printf '\nHidden=true\nX-GNOME-Autostart-enabled=false\n' >> /etc/xdg/autostart/blueman.desktop
+fi
 # AI services are enabled only on demand by the control center; make sure none is wanted at boot.
 rm -f /etc/systemd/system/*.wants/victor-llama.service
 

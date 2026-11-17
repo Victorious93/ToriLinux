@@ -156,3 +156,19 @@ def test_companion_pc_id_differs_between_data_stores(tmp_path, monkeypatch):
         (tmp_path / n / "config").mkdir(parents=True)
         ids.append(companion.pc_identity())
     assert ids[0] != ids[1]
+
+
+def test_input_and_bluetooth_are_off_by_default(control):
+    port, headers = control
+    status, data = request(port, "GET", "/api/input", headers=headers)
+    body = json.loads(data)
+    assert status == 200, data
+    assert body["enabled"] is False or body.get("running") is False
+    assert body["default_off"] is True
+    assert body["pairing"]["active"] is False
+    assert "token" not in json.dumps(body)
+    status, data = request(port, "GET", "/api/bluetooth", headers=headers)
+    body = json.loads(data)
+    assert status == 200, data
+    assert body["default"] == "off"
+    assert body["pairing"]["active"] is False

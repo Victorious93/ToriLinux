@@ -12,3 +12,5 @@ python3-tk
 gnome-themes-extra
 adwaita-icon-theme
 libglib2.0-bin
+# Optional Bluetooth manager. Autostart is hidden so Bluetooth stays off until the owner pairs a phone.
+blueman
