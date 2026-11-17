@@ -4,7 +4,7 @@
 set -uo pipefail
 PRIV=/usr/local/lib/victorlinux/pi/victor-pi-priv
 VPRIV=/usr/local/lib/victorlinux/victor-priv
-[ "$("$PRIV" setup-status)" = done ] && exit 0
+[ "$("$PRIV" setup-status)" = "done" ] && exit 0
 export NEWT_COLORS='root=cyan,black window=white,black border=cyan,black title=magenta,black button=black,cyan actbutton=black,magenta entry=white,black textbox=white,black'
 T="VictorLinux (Raspberry Pi) first-boot setup"
 w() { whiptail --title "$T" "$@" 3>&1 1>&2 2>&3; }

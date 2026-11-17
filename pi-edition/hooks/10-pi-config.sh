@@ -62,7 +62,7 @@ systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
 systemctl enable NetworkManager.service bluetooth.service nftables.service systemd-timesyncd.service 2>/dev/null || true
 systemctl enable victor-storage.service victor-access.service victor-pi-board.service victor-pi-grow-data.service \
   victor-pi-firstboot-file.service victor-pi-keys.service
-for u in hciuart.service; do systemctl enable "$u" 2>/dev/null || true; done   # present only in some pi-bluetooth versions
+systemctl enable hciuart.service 2>/dev/null || true   # present only in some pi-bluetooth versions
 rm -f /etc/systemd/system/*.wants/victor-llama.service
 
 if [ "$PI_DESKTOP" = 1 ]; then
