@@ -4,6 +4,9 @@
 #   scripts/make-usb.sh list
 #   scripts/make-usb.sh plan  --iso out/X.iso --device /dev/sdX
 #   scripts/make-usb.sh write --iso out/X.iso --device /dev/sdX --confirm-serial SERIAL [--layout raw|ventoy] [--ventoy DIR]
+#   scripts/make-usb.sh verify --iso out/X.iso --device /dev/sdX                    (read-only check of a written stick)
+#   scripts/make-usb.sh update --iso out/NEW.iso --device /dev/sdX --confirm-serial SERIAL
+#                       (raw layout: new OS image, VICTORDATA kept in place; refuses if the new image would reach the data)
 #
 # raw-layout options (see docs/usb.md):
 #   --table auto|mbr|gpt   auto (default) keeps the proven MBR layout when it is fully representable, else GPT
@@ -11,6 +14,8 @@
 #   --reserve-mib N        space deliberately left unallocated at the end (default 1024)
 #   --min-data-gib N       refuse drives that would leave less data space (default 2)
 #   --allow-mbr-cap        only for images without GPT support: accept a data partition limited to MBR's 2 TiB
+#   --headroom-mib N       free space kept after the OS image so later, larger images can be written with `update`
+#                          without moving the data partition (default 2048; 0 = none)
 #
 # Layouts:
 #   raw     (default) the hybrid ISO is written straight to the drive, then an ext4 partition labelled VICTORDATA
@@ -56,7 +61,8 @@ check_target() {
     || die "$d is not a whole disk (give the disk, e.g. /dev/sdb, not a partition)"
   local real; real=$(readlink -f "$d")
   local p
-  for p in / "$repo" /boot /home /var/tmp /tmp; do
+  # the running system, the build workspace, and the medium this live session booted from
+  for p in / "$repo" /boot /home /var/tmp /tmp /run/archiso/bootmnt /run/live/medium /run/initramfs/live; do
     while read -r s; do
       [[ -n "$s" && "$(readlink -f "$s")" == "$real" ]] && die "$d backs $p (system or build workspace) - refusing"
     done < <(backing_disks "$p")
@@ -86,10 +92,10 @@ cmd_list() {
 
 # --- raw hybrid layout helpers ---------------------------------------------------------------
 layout_py="$repo/scripts/victor_layout.py"
-table_opt=auto; data_gib=""; reserve_mib=1024; min_data_gib=2; allow_mbr_cap=0
+table_opt=auto; data_gib=""; reserve_mib=1024; min_data_gib=2; allow_mbr_cap=0; headroom_mib=2048
 
 layout_args() {
-  local a=(--iso "$1" --device "$2" --table "$table_opt" --reserve-mib "$reserve_mib" --min-data-gib "$min_data_gib")
+  local a=(--iso "$1" --device "$2" --table "$table_opt" --reserve-mib "$reserve_mib" --min-data-gib "$min_data_gib" --image-headroom-mib "$headroom_mib")
   [[ -n "$data_gib" ]] && a+=(--data-gib "$data_gib")
   (( allow_mbr_cap )) && a+=(--allow-mbr-cap)
   printf '%s\0' "${a[@]}"
@@ -136,6 +142,7 @@ Sectors: logical=$plan_logical physical=$plan_physical  (512e is supported; 4Kn 
 ISO    : $iso ($(stat -c %s "$iso") bytes)
 Layout (raw hybrid ISO, partition table: $plan_table):
   -  ISO9660 hybrid image + its own EFI partition   ($(( plan_image_end / 1048576 )) MiB, partition table of the image kept as is)
+  -  ${headroom_mib} MiB free after the image for future in-place updates (\`update\` keeps VICTORDATA where it is)
   +  ext4 'VICTORDATA'  LBA $plan_start..$plan_end  $(python3 -c "print(f'{$plan_data_bytes/2**30:.2f}')") GiB  persistent: models, chats, settings, images, outputs, documents, logs
   -  unallocated $(python3 -c "print(f'{$plan_unalloc/2**30:.2f}')") GiB left free on purpose$( [[ "$plan_table" == gpt ]] && echo ' (plus the backup GPT at the end of the drive)' )
 ${plan_note}Plan check: all offsets are validated with 64-bit arithmetic against the measured device size before anything is written.
@@ -256,9 +263,86 @@ cmd_write() {
   echo "Done. ISO verified on the drive; drive is unmounted and safe to remove."
 }
 
+# --- verify / update in place ------------------------------------------------------------------
+data_part_dev() {   # device start_lba -> partition node with that start sector (sysfs), or empty
+  local dn sp; dn=$(basename "$(readlink -f "$1")")
+  for sp in /sys/class/block/"$dn"/"$dn"*/start; do
+    [[ -r "$sp" && "$(cat "$sp")" == "$2" ]] && { echo "/dev/$(basename "$(dirname "$sp")")"; return; }
+  done
+}
+
+payload_ok() {   # iso device -> 0 when the image payload after the 32 KiB system area matches the ISO byte for byte
+  local isob want got; isob=$(stat -c %s "$1")
+  want=$(tail -c +32769 "$1" | sha256sum | awk '{print $1}')
+  got=$(dd if="$2" bs=4M iflag=direct,skip_bytes,count_bytes skip=32768 count=$((isob - 32768)) status=none 2>/dev/null | sha256sum | awk '{print $1}')
+  [[ "$want" == "$got" ]]
+}
+
+cmd_verify() {   # read-only: never writes, never mounts read-write
+  [[ $EUID -eq 0 ]] || die "run as root (reading the raw device)"
+  [[ -b "$device" ]] || die "$device is not a block device"
+  local fail=0 cur start part
+  if payload_ok "$iso" "$device"; then echo "OK    OS image on $device matches $(basename "$iso")"; else echo "FAIL  OS image on $device does NOT match $(basename "$iso")"; fail=1; fi
+  if cur=$(python3 "$layout_py" current --device "$device" 2>/dev/null); then
+    start=$(sed -n 's/^DATA_START_LBA=//p' <<<"$cur")
+    part=$(data_part_dev "$device" "$start")
+    echo "OK    data partition entry ($(sed -n 's/^TABLE=//p' <<<"$cur"), starts at sector $start)"
+    if [[ -n "$part" ]]; then
+      local label; label=$(blkid -o value -s LABEL "$part" 2>/dev/null || true)
+      [[ "$label" == VICTORDATA || "$label" == TORIDATA ]] && echo "OK    $part is labelled $label" || { echo "FAIL  $part label is '$label', expected VICTORDATA"; fail=1; }
+      if lsblk -nro MOUNTPOINTS "$part" | grep -q '[^[:space:]]'; then echo "SKIP  $part is mounted; filesystem check skipped"
+      elif e2fsck -n "$part" >/dev/null 2>&1; then echo "OK    filesystem check (read-only) passed"
+      else echo "FAIL  filesystem check (read-only) reported problems: run e2fsck on $part"; fail=1; fi
+    else echo "WARN  partition node for sector $start not found (run partprobe)"; fi
+  else echo "FAIL  no VICTORDATA partition entry found"; fail=1; fi
+  (( fail == 0 )) && echo "Verified: nothing was written." || die "verification failed (nothing was written)"
+}
+
+cmd_update() {   # raw layout only: rewrite the OS image area and the table; VICTORDATA keeps its sectors and contents
+  [[ $EUID -eq 0 ]] || die "run as root"
+  for t in dd blockdev lsblk findmnt sha256sum python3 blkid; do need "$t"; done
+  check_target "$device"
+  local serial; serial=$(dev_field "$device" SERIAL)
+  [[ -n "$confirm_serial" ]] || die "pass --confirm-serial '$serial' to approve updating $device"
+  [[ "$confirm_serial" == "$serial" ]] || die "serial mismatch: you approved '$confirm_serial' but $device reports '$serial'. Nothing written."
+  [[ -f "$iso.sha256" ]] || die "missing $iso.sha256"
+  ( cd "$(dirname "$iso")" && sha256sum -c "$(basename "$iso").sha256" ) >/dev/null || die "ISO checksum does not match its .sha256"
+  local keep=() out
+  [[ -n "$keep_start" ]] && keep=(--keep-start "$keep_start" --keep-len "$keep_len" --keep-table "$keep_table")
+  out=$(python3 "$layout_py" update-plan --iso "$iso" --device "$device" "${keep[@]}" 2>&1) || die "update refused before any write: ${out#ERROR=}"
+  local start len table; start=$(sed -n 's/^DATA_START_LBA=//p' <<<"$out"); len=$(sed -n 's/^DATA_LEN_LBA=//p' <<<"$out"); table=$(sed -n 's/^TABLE=//p' <<<"$out")
+  local part; part=$(data_part_dev "$device" "$start")
+  [[ -n "$part" ]] || die "data partition node not found; nothing written"
+  local uuid_before sb_before; uuid_before=$(blkid -o value -s UUID "$part" 2>/dev/null || true)
+  sb_before=$(dd if="$part" bs=1M count=1 iflag=direct status=none | sha256sum | awk '{print $1}')
+  cat <<PLAN
+Update : $device  model='$(dev_field "$device" MODEL)' serial='$serial'
+New OS : $iso ($(stat -c %s "$iso") bytes)
+Keeps  : VICTORDATA $part  sectors $start..$((start + len - 1))  table=$table  UUID=$uuid_before  (contents untouched)
+If this is interrupted, your data is still on the drive. Re-run with:
+  --keep-start $start --keep-len $len --keep-table $table
+PLAN
+  local sig_before; sig_before="$(dev_field "$device" MODEL)|$serial|$(dev_bytes "$device")"
+  check_target "$device"
+  [[ "$sig_before" == "$(dev_field "$device" MODEL)|$(dev_field "$device" SERIAL)|$(dev_bytes "$device")" ]] || die "device identity changed - aborting"
+  echo ">>> Writing the new OS image to $device (data partition is not touched)"
+  dd if="$iso" of="$device" bs=4M conv=fsync,notrunc oflag=direct status=progress
+  sync; blockdev --flushbufs "$device"
+  python3 "$layout_py" update-apply --iso "$iso" --device "$device" --keep-start "$start" --keep-len "$len" --keep-table "$table" >/dev/null \
+    || die "writing the partition table failed. Your data is intact; re-run update with --keep-start $start --keep-len $len --keep-table $table"
+  sync; blockdev --flushbufs "$device"
+  payload_ok "$iso" "$device" || die "new OS image read back does NOT match the ISO"
+  partprobe "$device" 2>/dev/null || true; udevadm settle --timeout=20 2>/dev/null || true; sleep 2
+  part=$(data_part_dev "$device" "$start")
+  [[ -n "$part" ]] || die "data partition did not reappear at sector $start (re-run update with --keep-start $start --keep-len $len --keep-table $table)"
+  [[ "$(blkid -o value -s UUID "$part" 2>/dev/null || true)" == "$uuid_before" ]] || die "data partition UUID changed - check the drive before using it"
+  [[ "$(dd if="$part" bs=1M count=1 iflag=direct status=none | sha256sum | awk '{print $1}')" == "$sb_before" ]] || die "data partition start changed unexpectedly"
+  echo "Done. New OS image verified by read-back; VICTORDATA kept at the same sectors with the same UUID."
+}
+
 # --- args ----------------------------------------------------------------------------------
 sub=${1:-}; shift || true
-iso=""; device=""; confirm_serial=""; ventoy_dir=""; layout_kind="raw"
+iso=""; device=""; confirm_serial=""; ventoy_dir=""; layout_kind="raw"; keep_start=""; keep_len=""; keep_table=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --iso) iso=$2; shift 2;;
@@ -270,6 +354,10 @@ while [[ $# -gt 0 ]]; do
     --reserve-mib) reserve_mib=$2; shift 2;;
     --min-data-gib) min_data_gib=$2; shift 2;;
     --allow-mbr-cap) allow_mbr_cap=1; shift;;
+    --headroom-mib) headroom_mib=$2; shift 2; [[ "$headroom_mib" =~ ^[0-9]+$ ]] || die "--headroom-mib must be a number";;
+    --keep-start) keep_start=$2; shift 2; [[ "$keep_start" =~ ^[0-9]+$ ]] || die "--keep-start must be a sector number";;
+    --keep-len) keep_len=$2; shift 2; [[ "$keep_len" =~ ^[0-9]+$ ]] || die "--keep-len must be a sector count";;
+    --keep-table) keep_table=$2; shift 2; [[ "$keep_table" == mbr || "$keep_table" == gpt ]] || die "--keep-table must be mbr or gpt";;
     --layout) layout_kind=$2; shift 2; [[ "$layout_kind" == raw || "$layout_kind" == ventoy ]] || die "--layout must be raw or ventoy";;
     *) die "unknown argument $1";;
   esac
@@ -278,5 +366,9 @@ case "$sub" in
   list) cmd_list;;
   plan) [[ -f "$iso" && -n "$device" ]] || die "need --iso and --device"; cmd_plan;;
   write) [[ -f "$iso" && -n "$device" ]] || die "need --iso and --device"; cmd_write;;
-  *) sed -n '2,9p' "$0"; exit 2;;
+  verify) [[ -f "$iso" && -n "$device" ]] || die "need --iso and --device"; cmd_verify;;
+  update) [[ -f "$iso" && -n "$device" ]] || die "need --iso and --device"
+          [[ -z "$keep_start" || ( -n "$keep_len" && -n "$keep_table" ) ]] || die "--keep-start needs --keep-len and --keep-table"
+          cmd_update;;
+  *) sed -n '2,12p' "$0"; exit 2;;
 esac

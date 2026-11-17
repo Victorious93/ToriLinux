@@ -9,6 +9,8 @@ marketed size differ, so every number below is derived at run time.
   provision-usb.py plan  --device /dev/sdX --iso F   # real capacity -> layout; rejects layouts that do not fit
   provision-usb.py plan  --size-bytes N --iso F      # same, for a hypothetical/virtual disk
   provision-usb.py write --device /dev/sdX --iso F --confirm 'ERASE <id>' [--ventoy-dir DIR]
+  provision-usb.py update --device /dev/sdX --iso F --confirm 'UPDATE <id>'   # add a new ISO; no repartitioning
+  provision-usb.py verify --device /dev/sdX            # read-only: ISO checksums + VICTORDATA present + fsck -n
 
 `write` never guesses: it requires the exact confirmation string printed by `plan`, which embeds the device's
 model/serial/size identity, and re-reads that identity immediately before writing.
@@ -24,6 +26,7 @@ ISO_COPIES = 3                   # current + previous (rollback) + incoming upda
 ISO_HEADROOM = 1 * GiB
 MIN_SPARE = 256 * MiB            # left unallocated at the end (flash wear-levelling / future use)
 SPARE_FRACTION = 0.01
+UPDATE_SLACK = 32 * MiB          # free space kept on the Ventoy partition after an update
 
 
 ALLOW_LOOP = False   # set only by --virtual-test, for disposable loop-device images
@@ -124,6 +127,7 @@ def mounts_of(disk):
 
 
 SYSTEM_MOUNT_PREFIXES = ("/boot", "/usr", "/var", "/etc", "/opt", "/home", "/srv", "/nix", "/snap", "/root", "/proc", "/sys")
+LIVE_MEDIUM_MOUNTS = ("/run/live/medium", "/lib/live/mount/medium", "/run/archiso/bootmnt", "/run/initramfs/live")
 ALLOW_NON_USB = False   # --allow-non-usb: explicit override for internal/virtual disks
 
 
@@ -139,6 +143,9 @@ def protected_reasons(disk, paths):
     if disk.get("type") != "disk" and not (ALLOW_LOOP and disk.get("type") == "loop"):
         reasons.append("not a whole disk")
     mps = mounts_of(disk)
+    for mp in mps:
+        if mp in LIVE_MEDIUM_MOUNTS:
+            reasons.append(f"is the drive this live system booted from ({mp})")
     if "/" in mps or "/boot" in mps or "/boot/efi" in mps or "[SWAP]" in mps:
         reasons.append("holds the running system")
     for p in paths:
@@ -323,6 +330,127 @@ def cmd_write(a):
     print("DONE: drive prepared. Safe to remove after the OS reports it unmounted.")
 
 
+# ---------------------------------------------------------------- update / verify (no repartitioning)
+def ventoy_layout(dev):
+    """(ventoy exFAT partition, VICTORDATA partition or None) from the drive's labels; raises if not a VictorLinux stick."""
+    out = sh(["lsblk", "-J", "-p", "-o", "PATH,LABEL,FSTYPE,TYPE", dev]).stdout
+    parts = [c for d in json.loads(out)["blockdevices"] for c in d.get("children") or []]
+    vt = next((c["path"] for c in parts if (c.get("label") or "") == "Ventoy"), None)
+    data = next((c["path"] for c in parts if (c.get("label") or "") == "VICTORDATA"), None)
+    if not vt:
+        raise SystemExit("no Ventoy partition found: this is not a VictorLinux stick (nothing written)")
+    return vt, data
+
+
+def mount_exfat(part, mp, ro):
+    os.makedirs(mp)
+    opts = ["-o", "ro"] if ro else []
+    if sh(["mount", "-t", "exfat", *opts, part, mp], check=False).returncode:
+        if shutil.which("mount.exfat-fuse"):
+            sh(["mount", "-t", "exfat-fuse", *opts, part, mp])
+        else:
+            os.rmdir(mp)
+            raise SystemExit("cannot mount the exFAT Ventoy partition (install exfat-fuse)")
+
+
+def update_token(ident):
+    return f"UPDATE {ident}"
+
+
+def cmd_update(a):
+    """Copy a new ISO (+ its .sha256) onto the Ventoy partition. Never touches the partition table or VICTORDATA."""
+    if os.geteuid() != 0:
+        raise SystemExit("update needs root")
+    require_tools()
+    side = a.iso + ".sha256"
+    if not os.path.exists(side):
+        raise SystemExit(f"{side} missing: an update must be verifiable (nothing written)")
+    want = open(side).read().split()[0]
+    if sha256(a.iso) != want:
+        raise SystemExit("ISO does not match its .sha256 file; refusing")
+    d = find_disk(a.device)
+    ident = identity(d)
+    if a.confirm != update_token(ident):
+        raise SystemExit(f"confirmation mismatch. Required exactly: --confirm '{update_token(ident)}'")
+    why = protected_reasons(d, [os.getcwd(), os.path.dirname(os.path.abspath(a.iso))])
+    if why:
+        raise SystemExit(f"refusing: {', '.join(why)}")
+    vpart, _data = ventoy_layout(os.path.realpath(a.device))
+    for mp in mounts_of(d):                 # the stick may be auto-mounted by the desktop: unmount only this disk
+        sh(["umount", mp])
+    mp = f"/run/victor-update-{os.getpid()}"
+    mount_exfat(vpart, mp, ro=False)
+    try:
+        dst = os.path.join(mp, os.path.basename(a.iso))
+        if os.path.exists(dst):
+            raise SystemExit(f"{os.path.basename(a.iso)} is already on the stick (nothing written)")
+        st = os.statvfs(mp)
+        if st.f_bavail * st.f_frsize < os.path.getsize(a.iso) + UPDATE_SLACK:
+            others = sorted(f for f in os.listdir(mp) if f.endswith(".iso"))
+            raise SystemExit("not enough free space on the Ventoy partition; delete an old ISO first "
+                             f"(present: {', '.join(others) or 'none'}). Nothing was written.")
+        tmp = dst + ".part"
+        sh(["cp", a.iso, tmp]); sh(["sync"])
+        if sha256(tmp) != want:
+            os.unlink(tmp)
+            raise SystemExit("copied ISO checksum MISMATCH; the partial copy was removed, existing ISOs untouched")
+        os.rename(tmp, dst)
+        with open(dst + ".sha256", "w") as f:
+            f.write(f"{want}  {os.path.basename(a.iso)}\n")
+        sh(["sync"])
+        print(">> new ISO copied and verified:", want)
+        print("   Older ISOs were kept for rollback; Ventoy's boot menu lists them all.")
+    finally:
+        sh(["sync"], check=False); sh(["umount", mp], check=False); os.rmdir(mp)
+    print("DONE: VICTORDATA and the partition table were not touched.")
+
+
+def cmd_verify(a):
+    """Read-only health check of a provisioned stick."""
+    if os.geteuid() != 0:
+        raise SystemExit("verify needs root (it mounts the Ventoy partition read-only)")
+    dev = os.path.realpath(a.device)
+    find_disk(dev)
+    vpart, data = ventoy_layout(dev)
+    problems = []
+    if not data:
+        problems.append("no VICTORDATA partition")
+    already = {}
+    for n in lsblk_disks():
+        for c in n.get("children") or []:
+            if c.get("path") == vpart and c.get("mountpoints") and c["mountpoints"][0]:
+                already[vpart] = c["mountpoints"][0]
+    mp = already.get(vpart)
+    own = not mp
+    if own:
+        mp = f"/run/victor-verify-{os.getpid()}"
+        mount_exfat(vpart, mp, ro=True)
+    try:
+        isos = sorted(f for f in os.listdir(mp) if f.endswith(".iso"))
+        if not isos:
+            problems.append("no ISO on the Ventoy partition")
+        for f in isos:
+            side = os.path.join(mp, f + ".sha256")
+            if not os.path.exists(side):
+                print(f"   {f}: no .sha256 on the stick (copied by an older provisioner) - not checked")
+                continue
+            ok = sha256(os.path.join(mp, f)) == open(side).read().split()[0]
+            print(f"   {f}: {'sha256 OK' if ok else 'sha256 MISMATCH'}")
+            if not ok:
+                problems.append(f"{f} is corrupted")
+    finally:
+        if own:
+            sh(["umount", mp], check=False); os.rmdir(mp)
+    if data and shutil.which("e2fsck"):
+        r = sh(["e2fsck", "-n", data], check=False)
+        print(f"   VICTORDATA {data}: {'clean' if r.returncode == 0 else 'e2fsck -n reported problems'}")
+        if r.returncode:
+            problems.append("VICTORDATA filesystem needs a repair (run e2fsck on an unmounted stick)")
+    if problems:
+        raise SystemExit("VERIFY FAILED: " + "; ".join(problems))
+    print("VERIFY OK (read-only; nothing was written)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -338,6 +466,13 @@ def main():
     w.add_argument("--virtual-test", action="store_true", help="permit /dev/loop* (disposable test images only)")
     w.add_argument("--allow-non-usb", action="store_true", help="permit a non-USB, non-removable disk (dangerous)")
     w.set_defaults(f=cmd_write)
+    u = sp.add_parser("update"); u.add_argument("--device", required=True); u.add_argument("--iso", required=True)
+    u.add_argument("--confirm", required=True)
+    u.add_argument("--virtual-test", action="store_true"); u.add_argument("--allow-non-usb", action="store_true")
+    u.set_defaults(f=cmd_update)
+    v = sp.add_parser("verify"); v.add_argument("--device", required=True)
+    v.add_argument("--virtual-test", action="store_true"); v.add_argument("--allow-non-usb", action="store_true")
+    v.set_defaults(f=cmd_verify)
     a = ap.parse_args()
     global ALLOW_LOOP
     ALLOW_LOOP = bool(getattr(a, "virtual_test", False))

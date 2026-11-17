@@ -42,7 +42,7 @@ renamed Victorious fork of [sasha0552/ToriLinux](https://github.com/sasha0552/To
 | Inference | Separate CPU/Vulkan builds; optional NVIDIA CUDA and HIP | CPU + Vulkan; optional NVIDIA driver profile |
 | Launch | `victor-open` | `victor-control` |
 | Multi-drive storage destinations | **Yes** (this page) | Not yet: keeps its own `VICTORDATA` layout |
-| Boot-media tool | `scripts/make-usb.sh` (MBR ≤ 2 TiB, GPT beyond) | `debian-edition/scripts/provision-usb.py` (Ventoy; unchanged, not re-tested for multi-TB) |
+| Boot-media tool | `scripts/make-usb.sh` (MBR ≤ 2 TiB, GPT beyond) | `debian-edition/scripts/provision-usb.py` (Ventoy; `update`/`verify` copy ISOs only; not re-tested for multi-TB) |
 | Variants | GUI, headless, empty | GUI; headless is on the [roadmap](debian-edition/docs/ROADMAP.md) |
 
 The editions can recognise the same data-partition label but have **different configuration and chat layouts**, and do not migrate each other's settings.
@@ -95,6 +95,8 @@ FAT32 refuses single files of 4 GiB or more *before* a copy starts. Details, beh
    # Only after checking the plan and backing up the target:
    sudo scripts/make-usb.sh write --iso out/EXACT-victorlinux-image.iso --device /dev/sdX --confirm-serial ACTUAL_SERIAL
    ```
+
+   Later OS updates keep your data partition: `sudo scripts/make-usb.sh update ...` (see [boot media](docs/usb.md#updating-the-os-without-touching-your-data)).
 
 3. **Boot** the PC from the stick (firmware boot menu), run `victor-open`, choose storage, import or select a GGUF model, press **Start**.
 

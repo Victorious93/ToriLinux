@@ -40,6 +40,8 @@ sudo ./build.sh                       # see docs/BUILD.md (≈20 GiB disk, 8 GiB
 sudo ./scripts/provision-usb.py list --iso ../out/debian/*.iso
 sudo ./scripts/provision-usb.py plan --device /dev/sdX --iso ../out/debian/VictorLinux-*.iso   # shows computed layout
 sudo ./scripts/provision-usb.py write --device /dev/sdX --iso ... --confirm 'ERASE <identity from plan>'
+sudo ./scripts/provision-usb.py update --device /dev/sdX --iso NEW.iso --confirm 'UPDATE <identity>'  # add an ISO, data untouched
+sudo ./scripts/provision-usb.py verify --device /dev/sdX                                             # read-only check
 ```
 
 Boot the drive, choose the ISO in Ventoy, log in is automatic; the first-run wizard asks you to set **your own** password.

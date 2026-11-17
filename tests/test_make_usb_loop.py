@@ -144,3 +144,27 @@ def test_mbr_only_image_on_over_2tib_disk_is_refused_unless_cap_is_explicit(tmp_
     assert disk_digest(img) == before
     r = usb("plan", "--iso", iso, "--device", dev, "--allow-mbr-cap")
     assert r.returncode == 0 and "capped" in r.stdout
+
+
+def test_update_in_place_keeps_victordata_contents_and_verify_is_read_only(tmp_path, loopdisk):
+    """write v1 -> put a file on VICTORDATA -> update to a larger v2 image -> the file and UUID survive; verify passes."""
+    old = image_with_sha(tmp_path, size=100 << 20, name="old.iso")
+    img, dev = loopdisk(6 << 30)
+    assert usb("write", "--iso", old, "--device", dev, "--confirm-serial", "LOOPTEST").returncode == 0
+    mnt = tmp_path / "m"; mnt.mkdir()
+    sh("mount", dev + "p3", str(mnt)); (mnt / "victorlinux" / "chats" / "keep.txt").write_text("precious"); sh("umount", str(mnt))
+    uuid_before = sh("blkid", "-p", "-s", "UUID", "-o", "value", dev + "p3").stdout.strip()
+    new = image_with_sha(tmp_path, size=180 << 20, name="new.iso")
+    assert usb("update", "--iso", new, "--device", dev).returncode != 0                   # needs the serial confirmation
+    r = usb("update", "--iso", new, "--device", dev, "--confirm-serial", "LOOPTEST")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sh("blkid", "-p", "-s", "UUID", "-o", "value", dev + "p3").stdout.strip() == uuid_before
+    sh("mount", "-o", "ro", dev + "p3", str(mnt)); assert (mnt / "victorlinux" / "chats" / "keep.txt").read_text() == "precious"; sh("umount", str(mnt))
+    before = disk_digest(img)
+    v = usb("verify", "--iso", new, "--device", dev)
+    assert v.returncode == 0 and "OK    OS image" in v.stdout and disk_digest(img) == before
+    assert usb("verify", "--iso", old, "--device", dev).returncode != 0                   # the old image no longer matches
+    too_big = image_with_sha(tmp_path, size=3 << 30, name="big.iso")
+    before = disk_digest(img)
+    r = usb("update", "--iso", too_big, "--device", dev, "--confirm-serial", "LOOPTEST")
+    assert r.returncode != 0 and "overwrite your data" in r.stderr and disk_digest(img) == before
