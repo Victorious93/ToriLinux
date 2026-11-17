@@ -111,9 +111,9 @@ xz -dc out/pi/VictorLinux-pi-*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync sta
 
 ### CI
 
-[`.github/workflows/pi-image.yml`](../.github/workflows/pi-image.yml): static checks and tests on every relevant PR; a
-`pi-headless` image build on PRs touching the Pi edition, on GitHub's native arm64 runner (`ubuntu-24.04-arm`); any
-profile via **Run workflow** (`pi-desktop`, `--no-llama`, or an x86-64 runner with qemu-user-static, which is much slower).
+[`.github/workflows/pi-image.yml`](../.github/workflows/pi-image.yml): static checks and tests on every relevant PR;
+`pi-headless` and `pi-desktop` image builds on PRs touching the Pi edition, on GitHub's native arm64 runner (`ubuntu-24.04-arm`); any
+profile via **Run workflow** (`--no-llama`, or an x86-64 runner with qemu-user-static, which is much slower).
 Artifacts are CI outputs, not a release.
 
 ## Implemented vs built vs tested
