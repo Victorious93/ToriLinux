@@ -1,6 +1,7 @@
 [Unit]
 Description=VictorLinux Pi: first-boot setup on the console (headless profile, until the owner has a password)
 After=victor-pi-firstboot-file.service victor-storage.service victor-access.service NetworkManager.service
+ConditionPathExists=!/var/lib/victorlinux/firstboot.done
 Conflicts=getty@tty1.service
 Before=getty@tty1.service
 

@@ -98,6 +98,7 @@ DSRC="main contrib non-free non-free-firmware"
     --customize-hook="cp -a '$T/.' \"\$1/\"" \
     --customize-hook="mkdir -p \"\$1/tmp/victor-hooks\" && cp -a '$H/.' \"\$1/tmp/victor-hooks/\"" \
     --customize-hook='cp /etc/resolv.conf "$1/etc/resolv.conf" 2>/dev/null || true' \
+    --customize-hook='chroot "$1" apt-get update' \
     --customize-hook='for h in "$1"/tmp/victor-hooks/*.sh; do echo "== hook $(basename "$h")"; chroot "$1" /bin/bash "/tmp/victor-hooks/$(basename "$h")" || exit 1; done' \
     --customize-hook='rm -rf "$1/tmp/victor-hooks"; rm -f "$1/etc/resolv.conf"; ln -s ../run/NetworkManager/resolv.conf "$1/etc/resolv.conf"' \
     "$DEBIAN_SUITE" "$ROOTFS" \

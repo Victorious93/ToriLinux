@@ -70,7 +70,7 @@ if [ "$PI_DESKTOP" = 1 ]; then
   install -d /etc/lightdm/lightdm.conf.d
   printf '[Seat:*]\nautologin-user=victor\nautologin-user-timeout=0\nuser-session=xfce\n' > /etc/lightdm/lightdm.conf.d/50-victorlinux.conf
   # the Pi setup screen replaces the Debian edition's password-only first-run dialog
-  rm -f /etc/skel/.config/autostart/victor-firstrun.desktop
+  rm -f /etc/skel/.config/autostart/victor-firstrun.desktop /home/victor/.config/autostart/victor-firstrun.desktop
   systemctl disable victor-pi-setup-tty.service 2>/dev/null || true
 else
   systemctl set-default multi-user.target
