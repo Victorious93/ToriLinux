@@ -91,6 +91,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
   assert.equal(await page.locator('#advice').textContent().then(t => t.includes('Optional catalog (not downloaded)')), true);
   console.log('PASS host memory pool and ranked-model advice render');
+  // Check this PC: one click from the dashboard, verdict, fixes, saved report; speed test refuses without a loaded model
+  await page.click('#bFullCheck');
+  await page.waitForSelector('#t-logs.on');
+  await page.waitForSelector('#pcVerdict', {timeout: 20000});
+  assert.ok(await page.locator('#pcList .chk').count() >= 4);
+  assert.match(await page.locator('#pcList').innerText(), /Inference backend[\s\S]*How to fix/);
+  assert.match(await page.locator('#pcVerdict').innerText(), /saved as pc-check-[0-9a-f]{12}-\d{8}-\d{6}\.json/);
+  assert.ok(fs.readdirSync(tmp + '/data/reports').some(f => /^pc-check-.*\.json$/.test(f)) && fs.existsSync(tmp + '/data/reports/profiles.json'));
+  await page.click('#bSpeed');
+  await page.waitForFunction(() => /Start a model first/.test(document.querySelector('#toast').textContent));
+  console.log('PASS check this PC: verdict, fixes, saved profile, speed test needs a loaded model');
   // Storage tab with several drives at once: internal SSD, external 2 TB exFAT drive, FAT32 stick, locked and duplicate volumes
   await page.unroute('**/api/storage');
   const part = (o) => Object.assign({uuid: 'U', label: '', fstype: 'ext4', size: 1e12, free: 5e11, kind: 'internal-ssd', removable: false, model: '', serial: '',

@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
+import pccheck  # noqa: E402
+
+
 import modellib  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,6 +47,30 @@ SERVICES = {
     "sillytavern": {"label": "SillyTavern", "icon": "chat", "bin": "sillytavern", "port": 8000, "vram_hint_gib": 0,
                     "cmd": ["sillytavern"], "url": "http://127.0.0.1:8000/"},
 }
+
+
+def collect_pc_facts(speed=None):
+    """Facts for pccheck.evaluate(), read from this PC only (sysfs, /proc, vulkaninfo, nvidia-smi)."""
+    cpu = model_advisor.cpu_info()
+    try:
+        with open("/proc/cpuinfo") as f:
+            cpu["flags"] = sorted(pccheck.cpu_flags(f.read()))
+    except OSError:
+        cpu["flags"] = []
+    gl = tc.gpus()
+    vk = tc.vulkan_devices()
+    be, reason = tc.choose_backend(tc.load_settings()["backend"], gl, vk)
+    st = tc.persist_state()
+    free = None
+    root = tc.data_root()
+    if root and os.path.isdir(root):
+        try:
+            free = shutil.disk_usage(root).free
+        except OSError:
+            pass
+    return {"cpu": cpu, "ram": tc.ram_info(), "gpus": gl, "render_nodes": tc.render_nodes(), "vulkan": vk,
+            "backends": {k: bool(v) for k, v in tc.backends().items()}, "selected": {"backend": be, "reason": reason},
+            "storage": {"mode": st.get("mode"), "free": free}, "speed": speed, "checked": tc.now()}
 
 
 class Proc:
@@ -313,6 +340,41 @@ class App:
         self.llm_verify = {"state": "verified", "backend": info["backend"], "device": name}
         self.record_library_run(info, True)
         self.write_runtime(True, {"state": "verified"})
+
+    # ---------------------------------------------------------- pc check --
+    def pc_check(self):
+        facts = collect_pc_facts(getattr(self, "last_speed", None))
+        report = pccheck.evaluate(facts)
+        saved = None
+        d = tc.data_path("reports")
+        if d:
+            try:
+                saved = pccheck.save_profile(d, facts, report)
+            except OSError as e:
+                saved = {"error": str(e)}
+        return {"report": report, "facts": facts, "saved": saved, "text": pccheck.as_text(report)}
+
+    def speed_test(self, n_tokens=64):
+        """Short real generation on the model that is already loaded. Never starts or downloads a model."""
+        import urllib.request
+        if not self.llm.running():
+            return {"error": "Start a model first. The speed test only uses the model that is already loaded."}
+        key = self.ensure_upstream_key()
+        req = urllib.request.Request(f"http://127.0.0.1:{UPSTREAM_PORT}/v1/chat/completions", method="POST",
+                                     data=json.dumps({"model": "victor-local", "max_tokens": n_tokens, "temperature": 0,
+                                                      "messages": [{"role": "user", "content": "Count from one to fifty in words, comma separated."}]}).encode(),
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                body = json.loads(r.read().decode())
+        except (OSError, ValueError) as e:
+            return {"error": f"Speed test failed: {e}"}
+        sp = pccheck.speed_from_response(body, time.time() - t0, n_tokens)
+        sp.update(backend=self.llm_info.get("backend"), model=self.llm_info.get("model"), ts=tc.now())
+        self.last_speed = sp
+        return {"ok": True, "speed": sp}
+
 
     # ---------------------------------------------------------- library --
     def library(self):
@@ -655,6 +717,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 st = APP.fleet(["status"])
                 st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
                 return self._send(200, st)
+            if u.path == "/api/pccheck":
+                return self._send(200, APP.pc_check())
             if u.path == "/api/diagnostics":
                 return self._send(200, {"text": APP.diagnostics()})
             if u.path == "/api/import/status":
@@ -710,6 +774,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/pccheck/speed":
+                r = APP.speed_test()
+                return self._send(400 if "error" in r else 200, r)
+
+
             if p == "/api/library":
                 return self._send(*APP.library_action(b))
             if p == "/api/fleet/action":

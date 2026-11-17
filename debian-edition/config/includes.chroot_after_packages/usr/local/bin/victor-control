@@ -476,9 +476,14 @@ class App(tk.Tk):
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")
-        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+        for t, fn in (("Check this PC", self.pc_check), ("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
         self.diag_out = self.mkout(f)
+
+    def pc_check(self):
+        self.bg(lambda: ctl("diag", "check", timeout=180),
+                lambda r: self.out(self.diag_out, r["text"] + (f"\n\nSaved: {r['saved']['report']}" if (r.get("saved") or {}).get("report") else "")),
+                "checking this PC...")
 
     def diag(self):
         self.bg(lambda: ctl("diag", "show", timeout=180), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)), "collecting...")

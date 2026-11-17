@@ -3,7 +3,7 @@
 import argparse, json, os, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
-from victorlib import hw, storage, models, llama, api, bench, kali, diag, modellib
+from victorlib import hw, storage, models, llama, api, bench, kali, diag, pccheck, modellib
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -20,6 +20,46 @@ def out(a, obj):
         print(json.dumps(obj, indent=2, default=str))
     else:
         print(obj)
+
+
+def pc_facts():
+    """Facts for the shared pccheck module, from victorlib.hw (same checks as the Arch Control Center)."""
+    snap = hw.snapshot()
+    try:
+        flags = sorted(pccheck.cpu_flags(open("/proc/cpuinfo").read()))
+    except OSError:
+        flags = []
+    vram = snap.get("sysfs_vram") or []
+    gpus = []
+    for i, g in enumerate(snap.get("pci_gpus") or []):
+        v = vram[i] if i < len(vram) else {}
+        gpus.append({"name": g.get("desc"), "vendor": str(g.get("vendor", "")).lower(), "driver": g.get("driver"),
+                     "pci_id": g.get("pci_id"), "vram_total": v.get("vram_total")})
+    vk = snap.get("vulkan") or {}
+    c = llama.load_config()
+    sel = hw.select_backend(c.get("backend", "auto"), (snap.get("llama_devices") or {}).get("devices", []), None)
+    st = storage.status()
+    state = str(st.get("state", ""))
+    mode = "persistent" if state.startswith(("mounted-rw", "persistent")) else "temporary" if "session" in state else state or "unknown"
+    have = os.path.exists(hw.LLAMA_SERVER)
+    return {"cpu": {"name": snap["cpu"]["model"], "threads": snap["cpu"]["cores"], "flags": flags}, "ram": snap["ram"], "gpus": gpus,
+            "render_nodes": [{"path": n["path"], "accessible": n["user_can_rw"]} for n in snap["permissions"]["render_nodes"]],
+            "vulkan": {"available": bool(vk.get("devices")), "error": vk.get("error"),
+                       "devices": [{"deviceName": d.get("name"), "deviceType": d.get("deviceType", ""), "driverName": d.get("driverName")} for d in vk.get("devices", [])]},
+            "backends": {"vulkan": have, "cpu": have}, "selected": {"backend": sel["backend"], "reason": sel["reason"]},
+            "storage": {"mode": mode, "free": (st.get("usage") or {}).get("free")}, "speed": None}
+
+
+def pc_check(save=True):
+    facts = pc_facts()
+    report = pccheck.evaluate(facts)
+    saved = None
+    if save:
+        try:
+            saved = pccheck.save_profile(data_path("reports"), facts, report)
+        except (VictorError, OSError) as e:
+            saved = {"error": str(e)}
+    return {"report": report, "saved": saved, "text": pccheck.as_text(report)}
 
 
 def _library():
@@ -94,7 +134,8 @@ def main():
     ka = g("kali", "status", "start", "stop", "download", "load-pack")
     ka["start"].add_argument("--cap", action="append", default=[]); ka["download"].add_argument("--yes", action="store_true")
     ka["load-pack"].add_argument("tar")
-    g("diag", "show", "save-log")
+    dg = g("diag", "show", "save-log", "check")
+    dg["check"].add_argument("--no-save", action="store_true")
     g("versions", "show")
     a = ap.parse_args()
     try:
@@ -166,7 +207,10 @@ def main():
             elif a.cmd == "download": out(a, kali.download_pack(a.yes))
             else: out(a, kali.load_pack(a.tar))
         elif a.grp == "diag":
-            out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
+            if a.cmd == "check":
+                out(a, pc_check(not a.no_save))
+            else:
+                out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
         elif a.grp == "versions":
             out(a, diag.collect()["image_facts"] | diag.collect()["llama_build"])
     except VictorError as e:
