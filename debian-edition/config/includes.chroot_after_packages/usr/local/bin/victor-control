@@ -117,7 +117,7 @@ class App(tk.Tk):
             ttk.Label(card, textvariable=sub, style="TileSub.TLabel", wraplength=140).pack(anchor="w")
             self.tiles[key] = (v, sub)
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
-        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_docs(); self.tab_diag()
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_phone(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_docs(); self.tab_diag()
         self.after(500, self.refresh)
 
     # ---- helpers
@@ -342,6 +342,90 @@ class App(tk.Tk):
 
     def selftest(self):
         self.bg(lambda: ctl("api", "selftest", timeout=900), lambda r: self.out(self.remote_out, json.dumps(r, indent=2)), "testing endpoint...")
+
+
+    # ---- Phone as keyboard (Bluetooth, Wi-Fi, USB). Off by default.
+    def tab_phone(self):
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Phone keyboard")
+        ttk.Label(f, wraplength=820, text="Use the Victorious Keyboard app (com.victorious.keyboard) as a keyboard and mouse for this PC. "
+                  "Bluetooth and Wi-Fi input stay off until you turn them on. USB needs no PC software.").pack(anchor="w")
+        ttk.Label(f, text="Bluetooth (standard HID keyboard and mouse)", font=("Sans", 11, "bold")).pack(anchor="w", pady=(12, 2))
+        ttk.Label(f, wraplength=820, text="Makes this PC discoverable for 120 seconds, shows the passkey, and trusts the phone only after you confirm. "
+                  "Does not enable Bluetooth on boot.").pack(anchor="w")
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        for label, fn in (("Pair phone (Bluetooth)", self.bt_start), ("Confirm passkey", self.bt_confirm),
+                          ("Cancel", self.bt_cancel), ("List / refresh", self.bt_refresh)):
+            ttk.Button(b, text=label, command=fn).pack(side="left", padx=2)
+        row = ttk.Frame(f); row.pack(fill="x", pady=2)
+        self.bt_mac = tk.StringVar()
+        ttk.Label(row, text="Unpair address").pack(side="left")
+        e = ttk.Entry(row, textvariable=self.bt_mac, width=22); e.pack(side="left", padx=4)
+        ttk.Button(row, text="Unpair", command=self.bt_unpair).pack(side="left")
+        self.bt_out = self.mkout(f)
+        ttk.Label(f, text="Wi-Fi input (WebSocket, off by default)", font=("Sans", 11, "bold")).pack(anchor="w", pady=(12, 2))
+        ttk.Label(f, wraplength=820, text="Auth uses the victorpc://pair v1 QR flow and a per-device Bearer token (never in the QR). "
+                  "The Debian firewall stays closed until you turn this on, then opens only the input port. "
+                  "Turn it off to close the port. Localhost admin only; unauthenticated and replayed messages are rejected.").pack(anchor="w")
+        row2 = ttk.Frame(f); row2.pack(fill="x", pady=2)
+        self.in_bind, self.in_port, self.in_host = tk.StringVar(value="0.0.0.0"), tk.StringVar(value="8473"), tk.StringVar()
+        ttk.Label(row2, text="Listen").pack(side="left"); ttk.Entry(row2, textvariable=self.in_bind, width=16).pack(side="left", padx=4)
+        ttk.Label(row2, text="Port").pack(side="left"); ttk.Entry(row2, textvariable=self.in_port, width=6).pack(side="left", padx=4)
+        ttk.Button(row2, text="Turn on", style="Accent.TButton", command=self.in_on).pack(side="left", padx=2)
+        ttk.Button(row2, text="Turn off", style="Danger.TButton", command=self.in_off).pack(side="left", padx=2)
+        row3 = ttk.Frame(f); row3.pack(fill="x", pady=2)
+        ttk.Label(row3, text="Phone should use").pack(side="left")
+        ttk.Entry(row3, textvariable=self.in_host, width=24).pack(side="left", padx=4)
+        ttk.Button(row3, text="Pair phone (Wi-Fi keyboard)", command=self.in_pair).pack(side="left", padx=2)
+        ttk.Button(row3, text="Close pairing", command=self.in_pair_stop).pack(side="left", padx=2)
+        ttk.Button(row3, text="Refresh", command=self.in_refresh).pack(side="left", padx=2)
+        self.in_out = self.mkout(f)
+        ttk.Label(f, wraplength=820, text="USB: Victorious Keyboard's USB HID mode (root, ConfigFS on the phone) works with no PC software. "
+                  "That has not been tried on a real VictorLinux boot [Likely]. See docs/phone-as-keyboard.md.").pack(anchor="w", pady=(8, 0))
+
+    def bt_start(self):
+        self.bg(lambda: ctl("bluetooth", "start"), lambda r: self.out(self.bt_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def bt_confirm(self):
+        self.bg(lambda: ctl("bluetooth", "confirm"), lambda r: self.out(self.bt_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def bt_cancel(self):
+        self.bg(lambda: ctl("bluetooth", "cancel"), lambda r: self.out(self.bt_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def bt_refresh(self):
+        def fn():
+            st = ctl("bluetooth", "status")
+            ls = ctl("bluetooth", "list")
+            return {"status": st, "devices": ls}
+        self.bg(fn, lambda r: self.out(self.bt_out, json.dumps(r, indent=2)))
+
+    def bt_unpair(self):
+        mac = self.bt_mac.get().strip()
+        if not mac:
+            messagebox.showerror("VictorLinux", "Enter the Bluetooth address to unpair.")
+            return
+        self.bg(lambda: ctl("bluetooth", "unpair", mac), lambda r: self.out(self.bt_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def in_on(self):
+        self.bg(lambda: ctl("input", "enable", "--bind", self.in_bind.get().strip(), "--port", self.in_port.get().strip()),
+                lambda r: self.out(self.in_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def in_off(self):
+        self.bg(lambda: ctl("input", "disable"), lambda r: self.out(self.in_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def in_pair(self):
+        host = self.in_host.get().strip()
+        if not host:
+            messagebox.showerror("VictorLinux", "Enter the address the phone should use.")
+            return
+        def fn():
+            return ctl("input", "pair-start", "--host", host)
+        self.bg(fn, lambda r: self.out(self.in_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def in_pair_stop(self):
+        self.bg(lambda: ctl("input", "pair-cancel"), lambda r: self.out(self.in_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
+
+    def in_refresh(self):
+        self.bg(lambda: ctl("input", "status"), lambda r: self.out(self.in_out, json.dumps(r, indent=2) if not isinstance(r, str) else r))
 
     # ---- Kali
     def tab_kali(self):

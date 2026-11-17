@@ -34,6 +34,7 @@ import vbackup  # noqa: E402
 import docchat  # noqa: E402
 import pccheck  # noqa: E402
 import modellib  # noqa: E402
+import victorinput  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
@@ -856,6 +857,142 @@ class App:
             self.start_gateway(s)
         return {"ok": True}
 
+
+    def input_status(self):
+        """Wi-Fi input is off unless the owner started it. Never includes Bearer tokens."""
+        st = victorinput.default_off_status()
+        root = os.environ.get("VICTOR_INPUT_DIR") or tc.data_path("input") or victorinput.default_state_dir()
+        try:
+            sec = victorinput.load_secrets(root)
+            st["devices"] = victorinput.listing(sec)
+            st["pairing"] = victorinput.pairing_state(sec)
+        except OSError:
+            pass
+        # Prefer the live admin socket when the service is running (localhost only).
+        try:
+            import urllib.request
+            with urllib.request.urlopen("http://127.0.0.1:%d/status" % victorinput.ADMIN_PORT, timeout=0.4) as r:
+                live = json.loads(r.read().decode())
+                live.setdefault("default_off", True)
+                return live
+        except OSError:
+            pass
+        rc, out = self.priv(["input-status"])
+        if rc == 0:
+            try:
+                st.update(json.loads(out))
+            except ValueError:
+                pass
+        st["firewall_note"] = victorinput.firewall_note(st.get("bind") or "0.0.0.0", st.get("port") or victorinput.DEFAULT_PORT)
+        return st
+
+    def input_action(self, b):
+        act = b.get("action")
+        root = os.environ.get("VICTOR_INPUT_DIR") or tc.data_path("input") or victorinput.default_state_dir()
+        if act == "enable":
+            bind = str(b.get("bind") or "0.0.0.0").strip()
+            port = str(b.get("port") or victorinput.DEFAULT_PORT)
+            rc, out = self.priv(["input-enable", bind, port])
+            if rc != 0:
+                return 400, {"error": out or "Could not start the input service."}
+            try:
+                return 200, json.loads(out)
+            except ValueError:
+                return 200, {"ok": True, "message": out}
+        if act == "disable":
+            rc, out = self.priv(["input-disable"])
+            if rc != 0:
+                return 400, {"error": out or "Could not stop the input service."}
+            try:
+                return 200, json.loads(out)
+            except ValueError:
+                return 200, {"ok": True, "message": out}
+        if act == "pair-start":
+            # Prefer the running admin socket so the service and the QR share the same secrets file.
+            host = str(b.get("host") or "").strip()
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    "http://127.0.0.1:%d/pair-start" % victorinput.ADMIN_PORT,
+                    data=json.dumps({"host": host}).encode(), method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=2) as r:
+                    data = json.loads(r.read().decode())
+                if data.get("uri"):
+                    data["svg"] = qrsvg.svg(data["uri"])
+                return 200, data
+            except OSError:
+                app = victorinput.InputApp(root, sink=victorinput.MemorySink())
+                try:
+                    data = app.start_pairing_uri(host)
+                except ValueError as e:
+                    return 400, {"error": str(e)}
+                data["svg"] = qrsvg.svg(data["uri"])
+                data["message"] = data.get("message", "") + " Turn the service on so the phone can redeem the token."
+                return 200, data
+            except Exception as e:  # noqa: BLE001
+                return 400, {"error": str(e)}
+        if act == "pair-cancel":
+            try:
+                import urllib.request
+                req = urllib.request.Request("http://127.0.0.1:%d/pair-cancel" % victorinput.ADMIN_PORT,
+                                             data=b"{}", method="POST", headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=2) as r:
+                    return 200, json.loads(r.read().decode())
+            except OSError:
+                sec = victorinput.load_secrets(root)
+                victorinput.cancel_pairing(sec)
+                victorinput.save_secrets(sec, root)
+                return 200, {"ok": True, "message": "Pairing window closed."}
+        if act == "revoke":
+            sec = victorinput.load_secrets(root)
+            try:
+                n = victorinput.revoke(sec, str(b.get("id", "")))
+            except ValueError as e:
+                return 400, {"error": str(e)}
+            victorinput.save_secrets(sec, root)
+            return 200, {"ok": True, "revoked": n, "message": "Device revoked. It can no longer send input."}
+        return 400, {"error": "unknown input action"}
+
+    def bluetooth_status(self):
+        st = {"default": "off", "pairing": {"active": False}, "devices": [],
+              "message": "Bluetooth stays off by default. It is only started when you press Pair phone (Bluetooth)."}
+        rc, out = self.priv(["bt-status"])
+        if rc == 0:
+            try:
+                st.update(json.loads(out))
+            except ValueError:
+                st["message"] = out
+        rc, out = self.priv(["bt-list"])
+        if rc == 0:
+            try:
+                st["devices"] = json.loads(out).get("devices") or []
+            except ValueError:
+                pass
+        return st
+
+    def bluetooth_action(self, b):
+        act = b.get("action")
+        mapping = {"start": ["bt-start"], "confirm": ["bt-confirm"], "cancel": ["bt-cancel"]}
+        if act in mapping:
+            rc, out = self.priv(mapping[act])
+            if rc != 0:
+                return 400, {"error": out or "Bluetooth helper failed."}
+            try:
+                return 200, json.loads(out)
+            except ValueError:
+                return 200, {"ok": True, "message": out}
+        if act == "unpair":
+            rc, out = self.priv(["bt-unpair", str(b.get("mac") or "")])
+            if rc != 0:
+                return 400, {"error": out or "Could not unpair that device."}
+            try:
+                return 200, json.loads(out)
+            except ValueError:
+                return 200, {"ok": True, "message": out}
+        return 400, {"error": "unknown bluetooth action"}
+
     # -------------------------------------------------------------- diag --
     def diagnostics(self):
         lines = [f"VictorLinux diagnostics {tc.now()}"]
@@ -1003,6 +1140,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, st)
             if u.path == "/api/keys":
                 return self._send(200, APP.keys_status())
+            if u.path == "/api/input":
+                return self._send(200, APP.input_status())
+            if u.path == "/api/bluetooth":
+                return self._send(200, APP.bluetooth_status())
 
 
             if u.path == "/api/health":
@@ -1155,6 +1296,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Enter a hostname or IP address."})
                 r = subprocess.run([os.path.join(HERE, "..", "..", "bin", "victor-tls-cert"), host], capture_output=True, text=True)
                 return self._send(200 if r.returncode == 0 else 500, {"ok": r.returncode == 0, "message": r.stdout.strip() or r.stderr.strip()})
+            if p == "/api/input":
+                code, payload = APP.input_action(b)
+                return self._send(code, payload)
+            if p == "/api/bluetooth":
+                code, payload = APP.bluetooth_action(b)
+                return self._send(code, payload)
             if p == "/api/ssh":
                 act = b.get("action")
                 if act == "add-key":

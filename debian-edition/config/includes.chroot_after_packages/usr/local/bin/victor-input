@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""victor-input: optional Wi-Fi keyboard/mouse receiver for Victorious Keyboard.
+
+Off by default. Tokens are never printed except the one-time Bearer token on
+stdout of `pair-redeem` (phone-facing, not used by the owner CLI).
+"""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, "/usr/local/lib/victorlinux")
+# Tests / source checkout: also find the module next to this file's repo layout.
+_here = os.path.dirname(os.path.realpath(__file__))
+_alt = os.path.join(_here, "..", "lib", "victorlinux")
+if os.path.isdir(_alt):
+    sys.path.insert(0, _alt)
+
+import victorinput as vi  # noqa: E402
+
+
+def out(obj, code=0):
+    json.dump(obj, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    sys.exit(code)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="victor-input",
+                                 description="Optional Wi-Fi input receiver. Off by default. Never logs tokens.")
+    ap.add_argument("--dir", default=None, help="state directory (default: $VICTOR_INPUT_DIR or $VICTOR_DATA)")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    serve = sp.add_parser("serve", help="run the WSS receiver and localhost admin toggle")
+    serve.add_argument("--bind", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=vi.DEFAULT_PORT)
+    serve.add_argument("--admin-port", type=int, default=vi.ADMIN_PORT)
+    serve.add_argument("--sink", choices=("uinput", "memory"), default="uinput")
+    sp.add_parser("status", help="show whether the service is configured (does not start it)")
+    ps = sp.add_parser("pair-start", help="open a 10-minute pairing window (service must be running)")
+    ps.add_argument("--host", required=True, help="address the phone should use")
+    sp.add_parser("pair-cancel")
+    sp.add_parser("devices")
+    rv = sp.add_parser("revoke")
+    rv.add_argument("id")
+    a = ap.parse_args()
+    root = a.dir or vi.default_state_dir()
+    if a.cmd == "serve":
+        sink = vi.MemorySink() if a.sink == "memory" else vi.UInputSink()
+        app = vi.InputApp(root, sink=sink, bind=a.bind, port=a.port, admin_port=a.admin_port)
+        # Status only: never print secrets.
+        sys.stderr.write("victor-input listening (tokens are never logged)\n")
+        app.serve_forever()
+        return
+    if a.cmd == "status":
+        sec = vi.load_secrets(root)
+        st = vi.default_off_status()
+        st["devices"] = vi.listing(sec)
+        st["pairing"] = vi.pairing_state(sec)
+        st["dir"] = root
+        out(st)
+    if a.cmd == "devices":
+        out({"devices": vi.listing(vi.load_secrets(root))})
+    # pair-start/cancel/revoke against a running admin port are used by Control Center.
+    # Offline forms mutate the secrets file only when the service is stopped (pair-start needs a cert + host).
+    if a.cmd == "pair-cancel":
+        sec = vi.load_secrets(root)
+        vi.cancel_pairing(sec)
+        vi.save_secrets(sec, root)
+        out({"ok": True, "message": "Pairing window closed."})
+    if a.cmd == "revoke":
+        sec = vi.load_secrets(root)
+        try:
+            n = vi.revoke(sec, a.id)
+        except ValueError as e:
+            out({"error": str(e)}, 1)
+        vi.save_secrets(sec, root)
+        out({"ok": True, "revoked": n})
+    if a.cmd == "pair-start":
+        app = vi.InputApp(root, sink=vi.MemorySink(), bind="127.0.0.1")
+        try:
+            out(app.start_pairing_uri(a.host))
+        except ValueError as e:
+            out({"error": str(e)}, 1)
+
+
+if __name__ == "__main__":
+    main()

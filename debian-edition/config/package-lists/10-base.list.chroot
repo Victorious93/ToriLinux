@@ -27,6 +27,8 @@ nano
 htop
 pciutils
 usbutils
+# Bluetooth stack for optional phone-as-keyboard. bluetooth.service stays disabled at boot.
+bluez
 lm-sensors
 nftables
 openssh-server
