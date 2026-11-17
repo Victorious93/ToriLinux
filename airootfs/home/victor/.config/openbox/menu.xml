@@ -7,9 +7,9 @@
       </action>
     </item>
 
-    <item label="Phone mirroring">
+    <item label="VictorLinux Phone">
       <action name="Execute">
-        <execute>victor-phone</execute>
+        <execute>victor-phone-gui</execute>
       </action>
     </item>
 

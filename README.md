@@ -32,7 +32,7 @@ Inference runs on the **PC's** hardware, with no telemetry, no automatic downloa
 | **Control Center** | Local web UI in the VictorLinux palette (#0B0F1A, cyan #00E5FF, magenta #FF2BD6) with a live status dashboard (model, backend, API, storage, RAM/VRAM), keyboard navigation and responsive layout, plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
 | **Fleet** | Optional coordination of 3–4 phones ([fleet integration](docs/fleet-integration.md)); off until you turn it on |
-| **Phone mirroring** | Optional `victor-phone` (scrcpy) to mirror and control a USB-connected Android phone, with audio and recording. The image still builds if scrcpy is missing ([notes](docs/phone-mirroring.md)) |
+| **Phone mirroring** | Optional **VictorLinux Phone** Tk app (`victor-phone-gui`) on GUI builds, plus `victor-phone-headless` (adb/scrcpy CLI) on every profile, to mirror and control a USB-connected Android phone, with audio and recording. The image still builds if scrcpy is missing ([notes](docs/phone-mirroring.md)) |
 
 ## Screenshots
 

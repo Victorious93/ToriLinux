@@ -233,8 +233,9 @@ def test_docs_and_launchers_exist():
         / "debian-edition/config/includes.chroot_after_packages/usr/share/applications/victor-phone.desktop"
     )
     assert arch_desktop.read_text() == deb_desktop.read_text()
-    assert "Name=Phone mirroring" in arch_desktop.read_text()
-    assert "Exec=/usr/local/bin/victor-phone" in arch_desktop.read_text()
+    assert "Name=VictorLinux Phone" in arch_desktop.read_text()
+    assert "Exec=/usr/local/bin/victor-phone-gui" in arch_desktop.read_text()
     menu = (ROOT / "airootfs/home/victor/.config/openbox/menu.xml").read_text()
-    assert "victor-phone" in menu
-    assert "Phone mirroring" in menu
+    assert "victor-phone-gui" in menu
+    assert "VictorLinux Phone" in menu
+    assert (ROOT / "docs/phone-mirroring.md").read_text().count("victor-phone") >= 1
