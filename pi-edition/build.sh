@@ -88,9 +88,14 @@ chmod 0755 "$H"/*.sh
 for f in "$H"/*.sh; do bash -n "$f"; done
 
 DSRC="main contrib non-free non-free-firmware"
+# apt on the build host (mmdebstrap) needs both archive keys; the Pi key is also installed into the image for updates.
+gpg --dearmor < "$HERE/keys/raspberrypi-archive.asc" > "$STAGE/raspberrypi-archive.gpg"
+DEB_KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
+[ -f "$DEB_KEYRING" ] || { echo "missing $DEB_KEYRING (apt install debian-archive-keyring)" >&2; exit 1; }
 {
   mmdebstrap --mode=root --variant=apt --architectures="$PI_ARCH" \
     --components="$DSRC" --include="$pkgs" \
+    --keyring="$DEB_KEYRING" --keyring="$STAGE/raspberrypi-archive.gpg" \
     --aptopt='APT::Install-Recommends "false"' --dpkgopt='path-exclude=/usr/share/doc/*' --dpkgopt='path-include=/usr/share/doc/*/copyright' \
     --setup-hook='mkdir -p "$1/etc/apt/trusted.gpg.d" "$1/etc/apt/preferences.d" "$1/boot/firmware"' \
     --setup-hook="cp '$HERE/keys/raspberrypi-archive.asc' \"\$1/etc/apt/trusted.gpg.d/raspberrypi-archive.asc\"" \
