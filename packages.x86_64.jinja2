@@ -52,6 +52,9 @@ strace
 sudo
 syslinux
 usbutils
+# Phone mirroring (scrcpy is GUI-only below). adb/fastboot and udev rules.
+android-tools
+android-udev
 wget
 zsh
 {% if type != "empty" %}
@@ -98,4 +101,6 @@ ttf-liberation
 xclip
 xorg
 xorg-xinit
+# Phone mirroring (optional at runtime; image still works if later removed)
+scrcpy
 {% endif %}

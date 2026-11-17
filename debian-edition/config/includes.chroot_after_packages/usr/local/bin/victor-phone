@@ -1,0 +1,231 @@
+#!/bin/bash
+# victor-phone: mirror and control a USB-connected Android phone with scrcpy.
+# Optional: if scrcpy or adb is missing, print a clear message and exit.
+# Never download server binaries or other files. Never talk to the network
+# except through the local adb/scrcpy tools the user already has.
+set -u
+
+usage() {
+  cat <<'EOF'
+victor-phone — mirror and control a USB-connected Android phone
+
+Uses scrcpy (Genymobile/scrcpy, Apache-2.0) already installed on this system.
+Nothing is downloaded. Audio is left on scrcpy's default (device playback
+when the installed version supports it).
+
+Usage: victor-phone [options] [-- extra scrcpy args]
+
+  -h, --help            Show this help
+      --dry-run         Print the scrcpy arguments (one per line) and exit
+      --no-audio        Disable audio forwarding
+      --audio-source S  Pass --audio-source=S to scrcpy (e.g. output, mic)
+      --record FILE     Also record the session to FILE
+      --serial SERIAL   Select a device when more than one is connected
+      --window-title T  Window title (default: VictorLinux Phone)
+
+If scrcpy or adb is not installed, this command explains what is missing
+and exits. The rest of VictorLinux keeps working.
+
+USB debugging must be enabled on the phone, and you must authorize this
+PC the first time it is connected. If adb reports "no permissions" or
+the device does not appear, the logged-in user needs the udev rules and
+group membership from android-udev (Arch: android-udev, group adbusers)
+or android-sdk-platform-tools-common (Debian: group plugdev, and
+adbusers when that group exists). Unplug and replug the phone after
+group changes, or log out and back in.
+
+See docs/phone-mirroring.md.
+EOF
+}
+
+show_message() {
+  local msg=$1
+  printf '%s\n' "$msg" >&2
+  # Desktop launchers have no terminal; show a dialog only then.
+  if [ -t 0 ] || [ -t 2 ]; then
+    return 0
+  fi
+  if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    return 0
+  fi
+  if command -v zenity >/dev/null 2>&1; then
+    zenity --error --title="VictorLinux Phone" --text="$msg" || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send "VictorLinux Phone" "$msg" || true
+  fi
+}
+
+missing_help() {
+  local missing=$1
+  cat <<EOF
+victor-phone cannot start: ${missing} is not installed.
+
+Phone mirroring is optional. The rest of VictorLinux does not depend on it.
+
+  Arch edition: install the scrcpy, android-tools and android-udev packages.
+  Debian edition: adb is part of the image. scrcpy is not in Debian 13
+  (trixie); the image build installs it only when the suite or
+  trixie-backports provides it, and skips it otherwise. You can install
+  it yourself later with:
+    apt-get install -y --no-install-recommends scrcpy
+  or, if your administrator has enabled backports:
+    apt-get install -y --no-install-recommends -t trixie-backports scrcpy
+
+Nothing is downloaded automatically. Enable USB debugging on the phone,
+authorize this PC, and see docs/phone-mirroring.md for udev and group notes.
+EOF
+}
+
+window_title="VictorLinux Phone"
+no_audio=0
+audio_source=""
+record_file=""
+serial=""
+dry_run=0
+extra_args=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    --no-audio)
+      no_audio=1
+      shift
+      ;;
+    --audio-source)
+      if [ $# -lt 2 ] || [ -z "${2}" ]; then
+        echo "victor-phone: --audio-source needs a value (e.g. output, mic)" >&2
+        exit 2
+      fi
+      audio_source=$2
+      shift 2
+      ;;
+    --audio-source=*)
+      audio_source=${1#--audio-source=}
+      if [ -z "$audio_source" ]; then
+        echo "victor-phone: --audio-source needs a value (e.g. output, mic)" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --record)
+      if [ $# -lt 2 ] || [ -z "${2}" ]; then
+        echo "victor-phone: --record needs a file path" >&2
+        exit 2
+      fi
+      record_file=$2
+      shift 2
+      ;;
+    --record=*)
+      record_file=${1#--record=}
+      if [ -z "$record_file" ]; then
+        echo "victor-phone: --record needs a file path" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --serial)
+      if [ $# -lt 2 ] || [ -z "${2}" ]; then
+        echo "victor-phone: --serial needs a device serial" >&2
+        exit 2
+      fi
+      serial=$2
+      shift 2
+      ;;
+    --serial=*)
+      serial=${1#--serial=}
+      if [ -z "$serial" ]; then
+        echo "victor-phone: --serial needs a device serial" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --window-title)
+      if [ $# -lt 2 ] || [ -z "${2}" ]; then
+        echo "victor-phone: --window-title needs a value" >&2
+        exit 2
+      fi
+      window_title=$2
+      shift 2
+      ;;
+    --window-title=*)
+      window_title=${1#--window-title=}
+      if [ -z "$window_title" ]; then
+        echo "victor-phone: --window-title needs a value" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --)
+      shift
+      extra_args+=("$@")
+      break
+      ;;
+    -*)
+      echo "victor-phone: unknown option: $1 (try --help)" >&2
+      exit 2
+      ;;
+    *)
+      echo "victor-phone: unexpected argument: $1 (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ "$no_audio" -eq 1 ] && [ -n "$audio_source" ]; then
+  echo "victor-phone: use either --no-audio or --audio-source, not both" >&2
+  exit 2
+fi
+
+cmd=(scrcpy "--window-title=$window_title")
+if [ "$no_audio" -eq 1 ]; then
+  cmd+=(--no-audio)
+fi
+if [ -n "$audio_source" ]; then
+  cmd+=("--audio-source=$audio_source")
+fi
+if [ -n "$record_file" ]; then
+  cmd+=("--record=$record_file")
+fi
+if [ -n "$serial" ]; then
+  cmd+=("--serial=$serial")
+fi
+if [ ${#extra_args[@]} -gt 0 ]; then
+  cmd+=("${extra_args[@]}")
+fi
+
+if [ "$dry_run" -eq 1 ]; then
+  printf '%s\n' "${cmd[@]}"
+  exit 0
+fi
+
+if ! command -v scrcpy >/dev/null 2>&1; then
+  show_message "$(missing_help scrcpy)"
+  exit 1
+fi
+if ! command -v adb >/dev/null 2>&1; then
+  show_message "$(missing_help adb)"
+  exit 1
+fi
+
+# Hint only. scrcpy still starts so its own device picker can run.
+if command -v adb >/dev/null 2>&1; then
+  adb_out=$(adb devices 2>/dev/null || true)
+  if printf '%s\n' "$adb_out" | grep -q 'no permissions'; then
+    show_message "adb cannot access the phone (no permissions). Add this user to the adbusers or plugdev group, install the Android udev rules, then unplug and replug the phone. See docs/phone-mirroring.md."
+  elif ! printf '%s\n' "$adb_out" | awk 'NR>1 && $2=="device" {found=1} END{exit !found}'; then
+    if printf '%s\n' "$adb_out" | grep -q 'unauthorized'; then
+      show_message "The phone is connected but not authorized. Unlock it and accept the USB debugging prompt, then run victor-phone again."
+    else
+      show_message "No authorized phone was found. Connect it with a USB cable, enable USB debugging, and authorize this PC. See docs/phone-mirroring.md."
+    fi
+  fi
+fi
+
+exec "${cmd[@]}"

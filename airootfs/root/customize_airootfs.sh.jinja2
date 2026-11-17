@@ -13,6 +13,12 @@ export PATH=$HOME/.local/bin:$PATH
 passwd -l victor >/dev/null
 passwd -l root >/dev/null
 
+# Phone mirroring: android-udev provides adbusers + udev rules when installed.
+# Skip quietly on profiles that do not include it, so the build cannot fail.
+if getent group adbusers >/dev/null; then
+  usermod -aG adbusers victor
+fi
+
 find /root -type f -name "*.jinja2" -print -delete
 
 # user and runtime dirs with correct ownership
