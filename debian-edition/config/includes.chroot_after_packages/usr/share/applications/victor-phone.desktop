@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Phone mirroring
+Comment=Mirror and control a USB-connected Android phone (audio and optional recording)
+Exec=/usr/local/bin/victor-phone
+Icon=phone
+Categories=Utility;System;
+Terminal=false
+StartupNotify=true

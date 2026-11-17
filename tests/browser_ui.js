@@ -15,6 +15,11 @@ fs.mkdirSync(tmp + '/data/models', {recursive: true});
 fs.mkdirSync(tmp + '/notes', {recursive: true});
 fs.writeFileSync(tmp + '/notes/lease.md', '# Lease\n\nPets: one cat is allowed with a deposit of 300 dollars.\n');
 fs.writeFileSync(tmp + '/notes/recipe.txt', 'Bread needs flour, water, salt and yeast.');
+
+
+// Smallest valid GGUF v3 (no tensors, no metadata) so the model library has a real file to hash.
+const ggufHeader = Buffer.alloc(24); ggufHeader.write('GGUF', 0); ggufHeader.writeUInt32LE(3, 4);
+fs.writeFileSync(tmp + '/data/models/tiny-Q4_K_M.gguf', Buffer.concat([ggufHeader, Buffer.alloc(64 * 1024)]));
 const cc = spawn('python3', ['-I', root + '/lib/victorlinux/control_center.py'], {env});
 let output = '';
 cc.stdout.on('data', b => { output += b; });
@@ -94,11 +99,34 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.reload(); await page.waitForFunction(() => document.querySelector('#sCtx').value === '8192');
   assert.equal(await page.locator('#sCtxAuto').isChecked(), false, 'manual context choice persists');
   console.log('PASS runtime settings save and reload');
+  // Model library: quantisation from the name, background hash, remember settings, use with saved settings
+  await page.waitForFunction(() => document.querySelectorAll('#libTable tr[data-path]').length === 1);
+  const libRow = page.locator('#libTable tr[data-path]');
+  assert.match(await libRow.innerText(), /tiny-Q4_K_M\.gguf[\s\S]*Q4_K_M[\s\S]*Not hashed yet[\s\S]*Never run/);
+  await page.click('#bHashAll');
+  await page.waitForFunction(() => /Hashed/.test(document.querySelector('#libTable tr[data-path]').innerText), null, {timeout: 10000});
+  await libRow.locator('button[data-lib="remember"]').click();
+  await page.waitForFunction(() => /ctx 8192/.test(document.querySelector('#libTable tr[data-path]').innerText));
+  await libRow.locator('button[data-lib="apply"]').click();
+  await page.waitForFunction(() => /selected/.test(document.querySelector('#libTable tr[data-path]').innerText));
+  assert.match(await page.locator('#mSel').inputValue(), /tiny-Q4_K_M\.gguf$/);
+  console.log('PASS model library: quant, background hash, remembered settings, apply');
   await page.locator('[data-t="dash"]').click();
   await page.locator('#bAdvice').click();
   await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
   assert.equal(await page.locator('#advice').textContent().then(t => t.includes('Optional catalog (not downloaded)')), true);
   console.log('PASS host memory pool and ranked-model advice render');
+  // Check this PC: one click from the dashboard, verdict, fixes, saved report; speed test refuses without a loaded model
+  await page.click('#bFullCheck');
+  await page.waitForSelector('#t-logs.on');
+  await page.waitForSelector('#pcVerdict', {timeout: 20000});
+  assert.ok(await page.locator('#pcList .chk').count() >= 4);
+  assert.match(await page.locator('#pcList').innerText(), /Inference backend[\s\S]*How to fix/);
+  assert.match(await page.locator('#pcVerdict').innerText(), /saved as pc-check-[0-9a-f]{12}-\d{8}-\d{6}\.json/);
+  assert.ok(fs.readdirSync(tmp + '/data/reports').some(f => /^pc-check-.*\.json$/.test(f)) && fs.existsSync(tmp + '/data/reports/profiles.json'));
+  await page.click('#bSpeed');
+  await page.waitForFunction(() => /Start a model first/.test(document.querySelector('#toast').textContent));
+  console.log('PASS check this PC: verdict, fixes, saved profile, speed test needs a loaded model');
   // Storage tab with several drives at once: internal SSD, external 2 TB exFAT drive, FAT32 stick, locked and duplicate volumes
   await page.unroute('**/api/storage');
   const part = (o) => Object.assign({uuid: 'U', label: '', fstype: 'ext4', size: 1e12, free: 5e11, kind: 'internal-ssd', removable: false, model: '', serial: '',
