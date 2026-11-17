@@ -19,7 +19,7 @@ ID=victorlinux
 ID_LIKE=debian
 VERSION_ID="13"
 VERSION_CODENAME=trixie
-HOME_URL="https://github.com/Victorious93/ToriLinux"
+HOME_URL="https://github.com/Victorious93/VictorLinux"
 OS
 printf 'VictorLinux (Debian edition)\\n' > /etc/issue
 cat > /etc/hosts <<'H'

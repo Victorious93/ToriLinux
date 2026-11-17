@@ -247,6 +247,9 @@ class App(tk.Tk):
         ttk.Button(row, text="Select for inference", command=self.select_model).pack(side="left", padx=3)
         ttk.Button(row, text="Remove", command=self.remove_model).pack(side="left", padx=3)
         ttk.Button(row, text="Reload list", command=self.load_models).pack(side="left", padx=3)
+        ttk.Button(row, text="Check integrity (hash)", command=self.hash_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Remember settings", command=lambda: self.bg(lambda: ctl("model", "remember", self._sel()),
+                                                                          lambda r: self.models_msg.set(f"remembered for this model: {r}"))).pack(side="left", padx=3)
         ttk.Label(f, text="Optional SHA-256 to verify:").pack(anchor="w"); self.sha = ttk.Entry(f); self.sha.pack(fill="x")
         s = ttk.LabelFrame(f, text="Inference settings", padding=6); s.pack(fill="x", pady=6)
         self.vars = {k: tk.StringVar() for k in ("backend", "ctx", "mem_limit_gb", "sleep_idle_minutes")}
@@ -268,6 +271,12 @@ class App(tk.Tk):
             for k in self.vars: self.vars[k].set(str(d["cfg"][k]))
             self.jinja.set(bool(d["cfg"]["jinja"])); self.models_msg.set(f"selected: {d['cfg']['model'] or '(none)'}")
         self.bg(lambda: {"models": ctl("model", "list"), "cfg": ctl("llama", "config")}, done)
+
+    def hash_model(self):
+        n = self._sel()
+        args = ["model", "hash", n] + (["--expected", self.sha.get().strip()] if self.sha.get().strip() else [])
+        self.bg(lambda: ctl(*args, timeout=7200), lambda r: self.models_msg.set(f"{n}: {r[n]['label']} {r[n].get('sha256', '')}"),
+                "hashing (reads the whole file)...")
 
     def _sel(self):
         i = self.model_list.curselection()

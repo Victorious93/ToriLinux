@@ -28,6 +28,9 @@ import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
 import pccheck  # noqa: E402
 
+
+import modellib  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
 CC_PORT = int(os.environ.get("VICTOR_CC_PORT", "8787"))
@@ -85,6 +88,7 @@ class App:
         self.gw = Proc("gateway")
         self.svc = {k: Proc(k) for k in SERVICES}
         self.import_job = {"state": "idle"}
+        self.hash_job = None
         self.llm_info = {}
         self.token = pysecrets.token_urlsafe(32)
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
@@ -329,10 +333,12 @@ class App:
         except (OSError, ValueError) as e:
             self.llm_verify = {"state": "failed", "error": f"Loaded but did not generate: {e}"}
             self.write_runtime(True, {"state": "failed"})
+            self.record_library_run(info, False, str(e))
             return
         name = (info.get("device") or {}).get("name")
         hostplan.record_verified(info["model"], info["backend"], name, info["ngl"], info["ctx"])
         self.llm_verify = {"state": "verified", "backend": info["backend"], "device": name}
+        self.record_library_run(info, True)
         self.write_runtime(True, {"state": "verified"})
 
     # ---------------------------------------------------------- pc check --
@@ -368,6 +374,74 @@ class App:
         sp.update(backend=self.llm_info.get("backend"), model=self.llm_info.get("model"), ts=tc.now())
         self.last_speed = sp
         return {"ok": True, "speed": sp}
+
+
+    # ---------------------------------------------------------- library --
+    def library(self):
+        p = tc.data_path("settings", "library.json")
+        return modellib.Library(p) if p else None
+
+    def pc_id(self):
+        return modellib.pc_signature(model_advisor.cpu_info()["name"], [g.get("name") for g in tc.gpus()], tc.ram_info().get("total"))
+
+    def record_library_run(self, info, ok, note=None):
+        lib = self.library()
+        if lib and info.get("model"):
+            try:
+                lib.record_run(info["model"], self.pc_id(), info.get("backend"), (info.get("device") or {}).get("name"),
+                               info.get("ngl"), info.get("ctx"), ok, note)
+            except OSError:
+                pass
+
+    def library_list(self):
+        lib = self.library()
+        if not lib:
+            return {"error": "Choose storage first; the library is kept on your storage drive."}
+        s = tc.load_settings()
+        models = lib.describe(tc.list_models(s["extra_model_dirs"]), self.pc_id(), lambda p: tc.read_gguf_header(p)["meta"])
+        return {"models": models, "pc": self.pc_id(), "selected": s.get("model"),
+                "job": self.hash_job.status() if self.hash_job else {"state": "idle"}}
+
+    def library_action(self, b):
+        lib = self.library()
+        if not lib:
+            return 400, {"error": "Choose storage first."}
+        s = tc.load_settings()
+        known = {m["path"] for m in tc.list_models(s["extra_model_dirs"])}
+        act = b.get("action")
+        paths = b.get("paths") if isinstance(b.get("paths"), list) else ([b["path"]] if isinstance(b.get("path"), str) else [])
+        if act != "hash-all" and act != "cancel" and (not paths or any(p not in known for p in paths)):
+            return 400, {"error": "Model must be inside a configured model directory."}
+        if act in ("hash", "hash-all"):
+            if self.hash_job and self.hash_job.thread and self.hash_job.thread.is_alive():
+                return 409, {"error": "A hashing job is already running."}
+            if act == "hash" and b.get("expected"):
+                lib.set_expected(paths[0], str(b["expected"]))
+            self.hash_job = modellib.HashJob(lib)
+            return 200, {"ok": True, "job": self.hash_job.start(sorted(known) if act == "hash-all" else paths)}
+        if act == "cancel":
+            if self.hash_job:
+                self.hash_job.stop()
+            return 200, {"ok": True}
+        if act == "accept":
+            lib.reset_hash(paths[0])
+            return 200, {"ok": True, "message": "Reference checksum cleared; hash again to record the current file."}
+        if act == "remember":
+            keys = ("backend", "ctx", "ctx_auto", "gpu_layers", "threads")
+            src = b.get("settings") if isinstance(b.get("settings"), dict) else {k: s[k] for k in keys if k in s}
+            return 200, {"ok": True, "settings": lib.remember(paths[0], src), "message": "Settings remembered for this model."}
+        if act == "forget":
+            lib.forget_settings(paths[0])
+            return 200, {"ok": True, "message": "Remembered settings removed."}
+        if act == "apply":
+            saved = lib.entry(paths[0]).get("settings")
+            s["model"] = paths[0]
+            for k in ("backend", "ctx", "ctx_auto", "gpu_layers", "threads"):
+                if saved and k in saved:
+                    s[k] = saved[k]
+            tc.save_settings(s)
+            return 200, {"ok": True, "message": "Model selected" + (" with its remembered settings." if saved else ".")}
+        return 400, {"error": "unknown library action"}
 
     def stop_llm(self):
         self.write_runtime(False)
@@ -602,6 +676,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/models":
                 s = tc.load_settings()
                 return self._send(200, {"models": tc.list_models(s["extra_model_dirs"]), "dirs": [tc.data_path("models")] + s["extra_model_dirs"]})
+            if u.path == "/api/library":
+                r = APP.library_list()
+                return self._send(400 if "error" in r else 200, r)
             if u.path == "/api/recommendations":
                 gl = tc.gpus()
                 s = tc.load_settings()
@@ -700,6 +777,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if p == "/api/pccheck/speed":
                 r = APP.speed_test()
                 return self._send(400 if "error" in r else 200, r)
+
+
+            if p == "/api/library":
+                return self._send(*APP.library_action(b))
             if p == "/api/fleet/action":
                 return self._send(*APP.fleet_action(b))
             if p == "/api/llm/start":

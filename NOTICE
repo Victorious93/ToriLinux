@@ -6,4 +6,5 @@ upstream project (see LICENSE) unless a file states otherwise.
 
 Third-party components keep their own licenses:
   llama.cpp (MIT, ggml-org), Debian packages (their respective licenses, see /usr/share/doc/*/copyright in the image),
-  Ventoy (GPLv3, used unmodified as a separate tool), Kali Linux container image (various, kali.org), podman (Apache-2.0).
+  Ventoy (GPLv3, used unmodified as a separate tool), Kali Linux container image (various, kali.org), podman (Apache-2.0),
+  scrcpy (Apache-2.0, Genymobile/scrcpy).

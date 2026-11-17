@@ -12,6 +12,9 @@ const env = {...process.env, HOME: tmp, XDG_CACHE_HOME: tmp + '/cache',
   VICTOR_DATA: tmp + '/data', VICTOR_RUN_DIR: tmp + '/run', VICTOR_CC_PORT: '18788',
    VICTOR_FLEET_DIR: tmp + '/fleet', VICTOR_FLEET_BIN: path.resolve(__dirname, '..', 'fleet/bin/victor-fleet'), VICTOR_FLEET_LIB: path.resolve(__dirname, '..', 'fleet')};
 fs.mkdirSync(tmp + '/data/models', {recursive: true});
+// Smallest valid GGUF v3 (no tensors, no metadata) so the model library has a real file to hash.
+const ggufHeader = Buffer.alloc(24); ggufHeader.write('GGUF', 0); ggufHeader.writeUInt32LE(3, 4);
+fs.writeFileSync(tmp + '/data/models/tiny-Q4_K_M.gguf', Buffer.concat([ggufHeader, Buffer.alloc(64 * 1024)]));
 const cc = spawn('python3', ['-I', root + '/lib/victorlinux/control_center.py'], {env});
 let output = '';
 cc.stdout.on('data', b => { output += b; });
@@ -71,6 +74,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.reload(); await page.waitForFunction(() => document.querySelector('#sCtx').value === '8192');
   assert.equal(await page.locator('#sCtxAuto').isChecked(), false, 'manual context choice persists');
   console.log('PASS runtime settings save and reload');
+  // Model library: quantisation from the name, background hash, remember settings, use with saved settings
+  await page.waitForFunction(() => document.querySelectorAll('#libTable tr[data-path]').length === 1);
+  const libRow = page.locator('#libTable tr[data-path]');
+  assert.match(await libRow.innerText(), /tiny-Q4_K_M\.gguf[\s\S]*Q4_K_M[\s\S]*Not hashed yet[\s\S]*Never run/);
+  await page.click('#bHashAll');
+  await page.waitForFunction(() => /Hashed/.test(document.querySelector('#libTable tr[data-path]').innerText), null, {timeout: 10000});
+  await libRow.locator('button[data-lib="remember"]').click();
+  await page.waitForFunction(() => /ctx 8192/.test(document.querySelector('#libTable tr[data-path]').innerText));
+  await libRow.locator('button[data-lib="apply"]').click();
+  await page.waitForFunction(() => /selected/.test(document.querySelector('#libTable tr[data-path]').innerText));
+  assert.match(await page.locator('#mSel').inputValue(), /tiny-Q4_K_M\.gguf$/);
+  console.log('PASS model library: quant, background hash, remembered settings, apply');
   await page.locator('[data-t="dash"]').click();
   await page.locator('#bAdvice').click();
   await page.waitForFunction(() => document.querySelector('#advice').textContent.includes('Memory pool:'));
