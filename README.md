@@ -24,11 +24,12 @@ renamed Victorious fork of [sasha0552/ToriLinux](https://github.com/sasha0552/To
 | | |
 |---|---|
 | **Private local AI** | llama.cpp with CPU and Vulkan builds (optional NVIDIA CUDA / HIP), automatic backend, GPU offload and context sizing from the hardware you actually booted |
-| **Models you already have** | GGUF models used **in place** from any drive, including read-only drives and complete split sets; offline model advisor |
+| **Models you already have** | GGUF models used **in place** from any drive, including read-only drives and complete split sets; offline model advisor; [model library](docs/model-library.md) with background SHA-256 integrity checks, remembered per-model settings and "worked on this PC" history |
 | **Any drive, any size** | Storage chosen by detected capacity and capability. USB, internal SATA/NVMe, external SSD/HDD and SD cards, simultaneously; boot-media preparation for multi-terabyte drives |
 | **Control Center** | Local web UI in the VictorLinux palette (#0B0F1A, cyan #00E5FF, magenta #FF2BD6) with a live status dashboard (model, backend, API, storage, RAM/VRAM), keyboard navigation and responsive layout, plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
 | **Fleet** | Coordinate 3–4 phones ([fleet integration](docs/fleet-integration.md)) |
+| **Phone mirroring** | Optional `victor-phone` (scrcpy) to mirror and control a USB-connected Android phone, with audio and recording. The image still builds if scrcpy is missing ([notes](docs/phone-mirroring.md)) |
 
 <p align="center"><img src="docs/media/control-center-dashboard.png" alt="Control Center dashboard: status tiles for model, backend, API, storage, RAM and VRAM, rendered by the UI test from the source checkout (no GPU, no root helper)" width="860"></p>
 
@@ -138,7 +139,8 @@ Support for exFAT, NTFS, FAT32, Btrfs and XFS relies on the stock kernel and pac
 ## Hardware adaptation and models
 
 At every model start the PC measures itself: [hardware and model selection](docs/hardware-and-models.md) (memory pools, automatic context, threads, GPU layers, ranked local models, estimates versus verified generation, atomic split-GGUF import).
-Try `victor-hardware`, or *Check this PC & suggest models* in the Control Center. A software Vulkan renderer is reported as CPU fallback; estimates are not promises that a model fits.
+Try `victor-hardware`, or *Check this PC & suggest models* in the Control Center. [`victor-check` / *Full PC check*](docs/check-this-pc.md) explains a CPU fallback with concrete fixes, runs a short speed test on the loaded model and saves a hardware profile. A software Vulkan renderer is reported as CPU fallback; estimates are not promises that a model fits.
+[Ask your documents](docs/doc-chat.md) answers questions from folders you choose, fully offline, with cited passages (Control Center *Documents* tab, `victor-ctl docs` on Debian).
 [Storage health and encrypted backups](docs/storage-health-backups.md): free-space and read-only SMART warnings with fixes, passphrase-encrypted backups of settings and chats (secrets only if you opt in), and a verified two-step restore.
 Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a chosen models drive). Downloading models is never automatic.
 
@@ -160,11 +162,11 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 
 [Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
 [Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
-[Debian edition](debian-edition/README.md)
+[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
 
 ## Status and testing
 
-* **No VictorLinux release is published** and no ISO of this revision was built or booted. Earlier ISO evidence is in the [older report](docs/test-report.md) and applies to earlier artifacts only.
+* **No VictorLinux release is published.** Build status of current `main`: the **Debian edition ISO is built in CI** ([VictorLinux Debian ISO workflow](https://github.com/Victorious93/VictorLinux/actions/workflows/debian-iso.yml), artifact only, not a release); the **Arch edition ISO is not built in CI** (the manual *Build ISO* workflow has not been run). **Nothing has been booted on real hardware.** Earlier Arch ISO evidence (QEMU only, pre-rename) is in the [older report](docs/test-report.md) and applies to those artifacts only.
 * **Tested for this storage change** (see the [dated report](docs/2026-11-15-storage-testing.md)): partition planner unit tests; real `make-usb.sh` runs on loop devices including a sparse 3 TiB GPT validated by `sgdisk`;
   QEMU UEFI + BIOS boots of a *generic GRUB test image* written by the same code; multi-drive storage behaviour on real ext4 block devices (simultaneous use, reconnect in a different order, removal,
   duplicates, read-only, full); the Storage tab in Chromium.
@@ -194,4 +196,4 @@ Some build metadata still names the former repository URL; this repository is [V
 
 Original ToriLinux © [sasha0552](https://github.com/sasha0552), MIT. VictorLinux modifications © **Victorious / Victorious Framework**, same license unless a file states otherwise ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 Runtime and build components keep their own licenses: [llama.cpp](https://github.com/ggml-org/llama.cpp), [Arch Linux](https://archlinux.org/), [Debian](https://www.debian.org/),
-[Ventoy](https://github.com/ventoy/Ventoy) (GPLv3, used unmodified as a separate tool), and the optional ComfyUI, SD.Next, InvokeAI, SillyTavern, vLLM and nvidia-pstated packs.
+[Ventoy](https://github.com/ventoy/Ventoy) (GPLv3, used unmodified as a separate tool), [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0), and the optional ComfyUI, SD.Next, InvokeAI, SillyTavern, vLLM and nvidia-pstated packs.

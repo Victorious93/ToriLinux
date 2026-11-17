@@ -1,6 +1,6 @@
 # VictorLinux source verification — November 14, 2026
 
-Tested base: `Victorious93/ToriLinux` commit `ba05719bfa57c1d8a52991963758dddbe8e17413`, with the changes supplied in the companion ZIP. These changes are not a rebuilt ISO or a published release. The historical artifact report in `docs/test-report.md` remains historical evidence only.
+Tested base: `Victorious93/ToriLinux` (since renamed to `Victorious93/VictorLinux`) commit `ba05719bfa57c1d8a52991963758dddbe8e17413`, with the changes supplied in the companion ZIP. These changes are not a rebuilt ISO or a published release. The historical artifact report in `docs/test-report.md` remains historical evidence only.
 
 ## Observed checks
 
