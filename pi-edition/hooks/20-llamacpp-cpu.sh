@@ -18,6 +18,9 @@ git fetch -q --depth 1 origin "$LLAMACPP_COMMIT"
 git checkout -q FETCH_HEAD
 got="$(git rev-parse HEAD)"
 [ "$got" = "$LLAMACPP_COMMIT" ] || { echo "llama.cpp commit mismatch: $got != $LLAMACPP_COMMIT" >&2; exit 1; }
+# The shallow checkout has no build number, so the UI bundle version defaults to "b1" (absent upstream) and cmake falls back to
+# the floating "latest" bundle, which has drifted and fails validation. Pin it to the tag matching the pinned commit.
+export HF_UI_VERSION="$LLAMACPP_TAG"
 common=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF -DLLAMA_OPENSSL=ON -DLLAMA_CURL=OFF
         -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON
         -DCMAKE_INSTALL_PREFIX=/opt/victorlinux/llama.cpp "-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib")
