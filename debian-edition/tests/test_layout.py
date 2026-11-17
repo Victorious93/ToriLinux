@@ -50,5 +50,36 @@ class Layout(unittest.TestCase):
         self.assertEqual(prov.identity(d), "USB_DISK_3.0:ABC123:61847529062")
 
 
+class UpdateSafety(unittest.TestCase):
+    usb = {"type": "disk", "tran": "usb", "rm": True, "maj:min": "250:250", "children": []}
+
+    def test_booted_live_stick_is_refused(self):
+        for mp in ("/run/live/medium", "/lib/live/mount/medium"):
+            d = dict(self.usb, children=[{"mountpoints": [mp], "children": []}])
+            self.assertTrue(any("booted from" in r for r in prov.protected_reasons(d, [])), mp)
+
+    def test_plain_usb_stick_is_not_refused(self):
+        d = dict(self.usb, children=[{"mountpoints": ["/media/user/Ventoy"], "children": []}])
+        self.assertEqual(prov.protected_reasons(d, []), [])
+
+    def test_update_token_differs_from_erase_token(self):
+        self.assertEqual(prov.update_token("M:S:1"), "UPDATE M:S:1")
+        self.assertNotEqual(prov.update_token("M:S:1"), "ERASE M:S:1")
+
+    def test_update_never_repartitions_or_formats(self):
+        import inspect
+        src = inspect.getsource(prov.cmd_update)
+        for tool in ("sfdisk", "mkfs", "Ventoy2Disk", "wipefs", "dd"):
+            self.assertNotIn(f'"{tool}', src)
+
+    def test_update_and_verify_require_root(self):
+        import types
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        for f in (prov.cmd_update, prov.cmd_verify):
+            with self.assertRaises(SystemExit):
+                f(types.SimpleNamespace(device="/dev/null", iso="/nonexistent.iso", confirm="x"))
+
+
 if __name__ == "__main__":
     unittest.main()

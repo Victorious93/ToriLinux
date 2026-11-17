@@ -8,6 +8,9 @@ device is checked explicitly, and the WHOLE plan is validated before anything is
 Commands (all print KEY=VALUE lines, never evaluated by a shell):
   victor_layout.py plan  --iso ISO (--device DEV | --disk-bytes N [--logical N --physical N]) [options]
   victor_layout.py apply --iso ISO --device DEV|FILE [options]   # writes ONLY the partition table, after plan validation
+  victor_layout.py current --device DEV|FILE                      # read-only: where the existing data partition is
+  victor_layout.py update-plan  --iso NEW.iso --device DEV [--keep-start LBA --keep-len LBA --keep-table mbr|gpt]
+  victor_layout.py update-apply --iso NEW.iso --device DEV [same]  # table only, data partition kept at the same sectors
 
 Model of the boot image: the hybrid ISO is written raw at LBA 0 (512-byte units). Its own system area
 (MBR boot code, GPT if present, El Torito/ESP partitions) is preserved. A persistent data partition is
@@ -133,8 +136,10 @@ def _down(v, a):
 
 def plan_layout(disk_bytes, image, logical=512, physical=512, table="auto", data_bytes=None,
                 reserve_bytes=DEFAULT_RESERVE_MIB * MIB, min_data_bytes=DEFAULT_MIN_DATA_GIB * GIB,
-                allow_mbr_cap=False):
-    """Compute the complete plan. Pure function: raises PlanError, never touches a device."""
+                allow_mbr_cap=False, image_headroom_bytes=0):
+    """Compute the complete plan. Pure function: raises PlanError, never touches a device.
+    image_headroom_bytes leaves room between the image and the data partition so a larger future image can be
+    written in place (`update`) without moving the data partition."""
     if table not in ("auto", "mbr", "gpt"):
         raise PlanError("table must be auto, mbr or gpt")
     if disk_bytes <= 0:
@@ -154,7 +159,9 @@ def plan_layout(disk_bytes, image, logical=512, physical=512, table="auto", data
         raise PlanError("device size is not a multiple of its logical sector size")
     total_lba = disk_bytes // logical
     image_end = image["end_s512"] * ISO_UNIT                       # bytes
-    data_start = _up(image_end, ALIGN_BYTES)
+    if image_headroom_bytes < 0:
+        raise PlanError("image headroom cannot be negative")
+    data_start = _up(image_end + image_headroom_bytes, ALIGN_BYTES)
 
     gpt_capable = True
     why_not = ""
@@ -367,13 +374,13 @@ def device_geometry(path):
     return bd("--getsize64"), bd("--getss"), bd("--getpbsz")
 
 
-def apply_plan(path, image, plan):
+def apply_plan(path, image, plan, part_guid=None):
     """Write only the partition-table metadata. The image bytes themselves are never rewritten here."""
     logical = plan["logical"]
     mbr = build_mbr(image, plan)
     with open(path, "r+b") as f:
         if plan["table"] == "gpt":
-            primary, entries, backup, ent_lba = build_gpt(image, plan)
+            primary, entries, backup, ent_lba = build_gpt(image, plan, part_guid=part_guid)
             array_sectors = gpt_geometry(image, logical)[4]
             # backup first: a crash before the primary is rewritten leaves the old (valid) image layout intact
             f.seek((plan["total_lba"] - 1 - array_sectors) * logical); f.write(entries)
@@ -393,6 +400,74 @@ def apply_plan(path, image, plan):
                 raise PlanError("MBR slot 3 read-back mismatch")
 
 
+# ------------------------------------------------------------------------------ update in place
+def current_data_partition(path, logical=512):
+    """Read-only. The existing VICTORDATA partition: MBR slot 3 (type 0x83) or a GPT entry named VICTORDATA.
+    Returns dict(table, start_lba, len_lba, part_guid) or None."""
+    with open(path, "rb") as f:
+        head = f.read(64 * 1024)
+    if len(head) < 512 or head[510:512] != b"\x55\xaa":
+        return None
+    g = parse_gpt(head, logical)
+    if g:
+        names = [p["name"].decode("utf-16-le", "replace").rstrip("\0") if isinstance(p["name"], (bytes, bytearray)) else str(p["name"])
+                 for p in g["entries"]]
+        ventoy = any(n in ("Ventoy", "VTOYEFI") for n in names)
+        for p, name in zip(g["entries"], names):
+            if name == "VICTORDATA":
+                return {"table": "gpt", "start_lba": p["start"], "len_lba": p["end"] - p["start"] + 1, "part_guid": p["guid"], "ventoy": ventoy}
+    e = head[446 + 32:446 + 48]
+    st, ln = struct.unpack("<II", e[8:16])
+    if e[4] == 0x83 and ln:
+        return {"table": "mbr", "start_lba": st, "len_lba": ln, "part_guid": None}
+    return None
+
+
+def plan_update(disk_bytes, image, logical, physical, current):
+    """Pure. Plan a new image written over the old one while the data partition keeps its exact sectors.
+    Raises PlanError (nothing touched) when the new image would reach into the data partition."""
+    if logical != 512:
+        raise PlanError(f"this drive uses {logical}-byte logical sectors (4Kn); boot media updates are refused")
+    if not current:
+        raise PlanError("no VICTORDATA partition found on this drive; use `write` for a fresh drive (it erases the drive)")
+    if current.get("ventoy"):
+        raise PlanError("this is a Ventoy drive: copy the new ISO onto its 'Ventoy' partition instead (no repartitioning needed)")
+    total_lba = disk_bytes // logical
+    start, length, table = int(current["start_lba"]), int(current["len_lba"]), current["table"]
+    end = start + length - 1
+    if start <= 0 or length <= 0 or end >= total_lba:
+        raise PlanError("the existing data partition entry is outside the drive")
+    image_end = image["end_s512"] * ISO_UNIT
+    if _up(image_end, ALIGN_BYTES) > start * logical:
+        raise PlanError(f"the new image needs {_up(image_end, ALIGN_BYTES) / GIB:.2f} GiB but only {start * logical / GIB:.2f} GiB lie before "
+                        "the data partition. Updating in place would overwrite your data. Back up, then use `write` (erases the drive).")
+    entries = image["mbr_entries"]
+    if table == "mbr":
+        if not (any(e["slot"] == 3 and e["type"] == 0 and e["len"] == 0 for e in entries) and not any(e["type"] == 0xEE for e in entries)):
+            raise PlanError("the new image's MBR slot 3 is not free, so the data partition cannot be kept in an MBR layout")
+    else:
+        if image["gpt"] is None and not image.get("sysarea_free", True):
+            raise PlanError("the new image cannot carry a GPT, but this drive's data partition is described by a GPT")
+        _el, _n, _esz, first, array_sectors = gpt_geometry(image, logical)
+        if start < first or end > total_lba - 2 - array_sectors:
+            raise PlanError("the data partition falls outside the new GPT's usable range")
+    gpt_over = (1 + gpt_geometry(image, logical)[4]) * logical if table == "gpt" else 0
+    return {
+        "table": table, "logical": logical, "physical": physical, "disk_bytes": disk_bytes, "total_lba": total_lba,
+        "image_bytes": image["size"], "image_end_bytes": image_end, "data_start_lba": start, "data_len_lba": length,
+        "data_end_lba": end, "data_bytes": length * logical, "unallocated_bytes": disk_bytes - (end + 1) * logical - gpt_over,
+        "reserve_bytes": disk_bytes - (end + 1) * logical, "min_data_bytes": 0, "gpt_backup_lba": total_lba - 1 if table == "gpt" else None,
+        "notes": ["data partition kept at the same sectors; only the image area and the partition table are rewritten"],
+        "part_guid": current.get("part_guid"),
+    }
+
+
+def apply_update(path, image, plan):
+    """Like apply_plan, but the GPT data entry keeps its partition GUID so PARTUUID references stay valid."""
+    guid = uuid.UUID(bytes_le=bytes(plan["part_guid"])) if plan["table"] == "gpt" and plan.get("part_guid") else None
+    return apply_plan(path, image, plan, part_guid=guid)
+
+
 # ------------------------------------------------------------------------------ CLI
 def _add_common(ap):
     ap.add_argument("--iso", required=True)
@@ -405,6 +480,7 @@ def _add_common(ap):
     ap.add_argument("--reserve-mib", type=int, default=DEFAULT_RESERVE_MIB)
     ap.add_argument("--min-data-gib", type=float, default=DEFAULT_MIN_DATA_GIB)
     ap.add_argument("--allow-mbr-cap", action="store_true")
+    ap.add_argument("--image-headroom-mib", type=int, default=0, help="free space after the image for in-place updates")
 
 
 def _plan_from_args(a):
@@ -420,7 +496,7 @@ def _plan_from_args(a):
     if a.reserve_mib < 1 or a.min_data_gib < 1:
         raise PlanError("reserve must be >= 1 MiB and minimum data >= 1 GiB")
     plan = plan_layout(size, image, lg, ph, a.table, None if a.data_gib is None else int(a.data_gib * GIB),
-                       a.reserve_mib * MIB, int(a.min_data_gib * GIB), a.allow_mbr_cap)
+                       a.reserve_mib * MIB, int(a.min_data_gib * GIB), a.allow_mbr_cap, a.image_headroom_mib * MIB)
     return image, plan
 
 
@@ -429,9 +505,37 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for n in ("plan", "apply"):
         _add_common(sub.add_parser(n))
+    cur = sub.add_parser("current")
+    cur.add_argument("--device", required=True)
+    for n in ("update-plan", "update-apply"):
+        u = sub.add_parser(n)
+        u.add_argument("--iso", required=True)
+        u.add_argument("--device", required=True)
+        u.add_argument("--keep-start", type=int, help="recovery: data partition start LBA printed before an interrupted update")
+        u.add_argument("--keep-len", type=int)
+        u.add_argument("--keep-table", choices=("mbr", "gpt"))
     a = ap.parse_args(argv)
     try:
-        image, plan = _plan_from_args(a)
+        if a.cmd == "current":
+            c = current_data_partition(a.device)
+            if not c:
+                raise PlanError("no VICTORDATA partition found")
+            print(f"TABLE={c['table']}\nDATA_START_LBA={c['start_lba']}\nDATA_LEN_LBA={c['len_lba']}")
+            return 0
+        if a.cmd in ("update-plan", "update-apply"):
+            image = inspect_image(a.iso)
+            size, lg, ph = device_geometry(a.device)
+            if a.keep_start is not None:
+                if not (a.keep_len and a.keep_table):
+                    raise PlanError("--keep-start needs --keep-len and --keep-table")
+                c = {"table": a.keep_table, "start_lba": a.keep_start, "len_lba": a.keep_len, "part_guid": None}
+            else:
+                c = current_data_partition(a.device, lg)
+            plan = plan_update(size, image, lg, ph, c)
+            if a.cmd == "update-apply":
+                apply_update(a.device, image, plan)
+        else:
+            image, plan = _plan_from_args(a)
         if a.cmd == "apply":
             apply_plan(a.device, image, plan)
     except PlanError as e:
