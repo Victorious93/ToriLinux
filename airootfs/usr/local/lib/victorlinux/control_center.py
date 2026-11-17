@@ -26,11 +26,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
+import apikeys  # noqa: E402
+import qrsvg  # noqa: E402
+import companion  # noqa: E402
+import diskhealth  # noqa: E402
+import vbackup  # noqa: E402
+import docchat  # noqa: E402
+import pccheck  # noqa: E402
+import modellib  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIV = os.environ.get("VICTOR_PRIV", "/usr/local/lib/victorlinux/victor-priv")
 CC_PORT = int(os.environ.get("VICTOR_CC_PORT", "8787"))
 UPSTREAM_PORT = 18081
+EMBED_PORT = 18082          # optional second llama-server with --embeddings, loopback only
 HOME = os.path.expanduser("~")
 TOKEN_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "victorlinux", "cc.token")
 
@@ -43,6 +52,30 @@ SERVICES = {
     "sillytavern": {"label": "SillyTavern", "icon": "chat", "bin": "sillytavern", "port": 8000, "vram_hint_gib": 0,
                     "cmd": ["sillytavern"], "url": "http://127.0.0.1:8000/"},
 }
+
+
+def collect_pc_facts(speed=None):
+    """Facts for pccheck.evaluate(), read from this PC only (sysfs, /proc, vulkaninfo, nvidia-smi)."""
+    cpu = model_advisor.cpu_info()
+    try:
+        with open("/proc/cpuinfo") as f:
+            cpu["flags"] = sorted(pccheck.cpu_flags(f.read()))
+    except OSError:
+        cpu["flags"] = []
+    gl = tc.gpus()
+    vk = tc.vulkan_devices()
+    be, reason = tc.choose_backend(tc.load_settings()["backend"], gl, vk)
+    st = tc.persist_state()
+    free = None
+    root = tc.data_root()
+    if root and os.path.isdir(root):
+        try:
+            free = shutil.disk_usage(root).free
+        except OSError:
+            pass
+    return {"cpu": cpu, "ram": tc.ram_info(), "gpus": gl, "render_nodes": tc.render_nodes(), "vulkan": vk,
+            "backends": {k: bool(v) for k, v in tc.backends().items()}, "selected": {"backend": be, "reason": reason},
+            "storage": {"mode": st.get("mode"), "free": free}, "speed": speed, "checked": tc.now()}
 
 
 class Proc:
@@ -60,6 +93,12 @@ class App:
         self.gw = Proc("gateway")
         self.svc = {k: Proc(k) for k in SERVICES}
         self.import_job = {"state": "idle"}
+        self.health_cache = {"t": 0.0, "r": None}
+
+
+        self.emb = Proc("embed")
+        self.doc_job = docchat.IndexJob()
+        self.hash_job = None
         self.llm_info = {}
         self.token = pysecrets.token_urlsafe(32)
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
@@ -153,6 +192,219 @@ class App:
             s["upstream_key"] = pysecrets.token_urlsafe(32)
             tc.save_secrets(s)
         return s["upstream_key"]
+
+    # ---------------------------------------------------- storage health --
+    def storage_health(self, refresh=False):
+        """Free space on every place VictorLinux writes, plus read-only SMART for the disks behind them (cached 10 min)."""
+        if not refresh and self.health_cache["r"] and time.time() - self.health_cache["t"] < 600:
+            return self.health_cache["r"]
+        root = tc.data_root()
+        paths = [("VictorLinux data", root)] if root else []
+        paths += [("Models folder", d) for d in tc.load_settings().get("extra_model_dirs", [])]
+        space = diskhealth.free_space(paths)
+        disks = []
+        for item in space:
+            r = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "--target", item["path"]], capture_output=True, text=True, timeout=10)
+            disk = diskhealth.disk_of(r.stdout.strip().split("[")[0]) if r.returncode == 0 else None
+            item["disk"] = disk
+            if disk and disk not in disks:
+                disks.append(disk)
+        smart = []
+        for d in disks:
+            j = self.priv_json(["smart", d])
+            smart.append(diskhealth.parse_smart(j) if "error" not in j else
+                         {"device": d, "model": "", "status": "unknown", "findings": [{"level": "unknown", "text": "SMART check unavailable: " + j["error"][:160],
+                                                                                    "fix": "Run victor-priv smart as root or install smartmontools."}]})
+        rep = diskhealth.report(space, smart)
+        rep["checked"] = tc.now()
+        if not root:
+            rep["note"] = "No storage selected yet: choose a drive in Storage to check its space and health."
+        self.health_cache = {"t": time.time(), "r": rep}
+        return rep
+
+    # ----------------------------------------------------------- backups --
+    BACKUP_ITEMS = ["config", "chats", "docs/config.json", "reports"]
+    BACKUP_SECRETS = ["config/secrets.json", "server"]
+
+    def backup_dir(self):
+        return tc.data_path("backups")
+
+    def backup_file(self, b):
+        """A backup in the backups folder (by name) or a .vlbak file elsewhere (e.g. a USB stick)."""
+        name, path = b.get("name"), b.get("path")
+        if isinstance(name, str) and vbackup.NAME_RE.match(name):
+            return os.path.join(self.backup_dir(), name)
+        if isinstance(path, str) and path.endswith(vbackup.SUFFIX):
+            p = os.path.realpath(os.path.expanduser(path))
+            if os.path.isfile(p) and os.path.getsize(p) < 3 * 1024 ** 3:
+                return p
+        raise vbackup.BackupError("Choose a backup from the list, or enter the full path of a .vlbak file.")
+
+    def backups_action(self, b):
+        root = tc.data_root()
+        if not root:
+            return 400, {"error": "Choose storage first."}
+        act = b.get("action")
+        allowed = self.BACKUP_ITEMS + self.BACKUP_SECRETS
+        try:
+            if act == "create":
+                if b.get("passphrase") != b.get("confirm_passphrase"):
+                    return 400, {"error": "The two passphrases do not match."}
+                r = vbackup.create(root, self.backup_dir(), b.get("passphrase"), self.BACKUP_ITEMS, self.BACKUP_SECRETS,
+                                   include_secrets=b.get("include_secrets") is True)
+                r["message"] = f"Encrypted backup saved: {os.path.basename(r['path'])} ({r['files']} files" + \
+                               (", includes API keys and TLS keys)" if r["includes_secrets"] else ", no secrets)")
+                return 200, r
+            if act == "inspect":
+                return 200, vbackup.inspect(self.backup_file(b), b.get("passphrase") or "", allowed)
+            if act == "restore":
+                r = vbackup.restore(self.backup_file(b), b.get("passphrase") or "", root, allowed, self.backup_dir(), confirm=b.get("confirm") is True)
+                r["message"] = f"Restored {r['restored']} files." + (f" Previous versions saved in {r['previous_dir']}." if r["previous_dir"] else "") + \
+                               " Restart the model to use restored settings."
+                return 200, r
+        except vbackup.BackupError as e:
+            return 400, {"error": str(e)}
+        return 400, {"error": "unknown backup action"}
+
+
+    # ------------------------------------------------------------- docs --
+    def doc_index(self):
+        p = tc.data_path("docs", "index.sqlite")
+        return docchat.Index(p) if p else None
+
+    def doc_config(self):
+        try:
+            with open(tc.data_path("docs", "config.json")) as f:
+                c = json.load(f)
+            return c if isinstance(c, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def doc_private_paths(self):
+        """Never indexed: VictorLinux settings/secrets/TLS/state, the session token, SSH and GPG keys."""
+        out = [os.path.dirname(TOKEN_FILE), os.path.join(HOME, ".ssh"), os.path.join(HOME, ".gnupg")]
+        for part in ("secrets", "settings", "server", "docs", "backups"):
+            q = tc.data_path(part)
+            if q:
+                out.append(q)
+        try:
+            out.append(os.path.dirname(tc.secrets_path()))
+        except Exception:  # noqa: BLE001
+            pass
+        return [x for x in out if x]
+
+    def start_embedder(self, model):
+        with self.lock:
+            if not self.emb.running():
+                avail = tc.backends()
+                binary = avail.get("cpu") or next((v for v in avail.values() if v), None)
+                if not binary:
+                    return {"ok": False, "error": "No llama-server build in this image."}
+                cmd = [binary, "-m", model, "--host", "127.0.0.1", "--port", str(EMBED_PORT), "--embeddings", "-c", "2048",
+                       "-ngl", "0", "--api-key", self.ensure_upstream_key(), "--alias", "victor-embed",
+                       "-t", str(hostplan.default_threads())]
+                self.spawn(self.emb, cmd, env={"LD_LIBRARY_PATH": os.path.dirname(binary)})
+        import urllib.request
+        for _ in range(90):
+            if not self.emb.running():
+                return {"ok": False, "error": "Embedding server exited. See the 'embed' log."}
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{EMBED_PORT}/health", timeout=2) as r:
+                    if r.status == 200:
+                        return {"ok": True}
+            except OSError:
+                pass
+            time.sleep(1)
+        return {"ok": False, "error": "Embedding server did not become ready within 90 s."}
+
+    def embedder(self, start=True):
+        """Local embeddings only: the chosen embedding GGUF, else the chat server if it serves /v1/embeddings, else none."""
+        model = self.doc_config().get("embed_model")
+        if model and os.path.isfile(model):
+            if not self.emb.running():
+                if not start:
+                    return None, None
+                r = self.start_embedder(model)
+                if not r.get("ok"):
+                    raise RuntimeError(r["error"])
+            return docchat.Embedder(f"http://127.0.0.1:{EMBED_PORT}", self.ensure_upstream_key()), os.path.basename(model)
+        if self.llm.running():
+            e = docchat.Embedder(f"http://127.0.0.1:{UPSTREAM_PORT}", self.ensure_upstream_key(), timeout=30)
+            try:
+                e.embed(["probe"])
+                return e, os.path.basename(self.llm_info.get("model") or "chat-model")
+            except (OSError, ValueError):
+                return None, None
+        return None, None
+
+    def docs_status(self):
+        idx = self.doc_index()
+        if not idx:
+            return {"error": "Choose storage first. The document index is kept on your storage drive."}
+        c = self.doc_config()
+        return {"sources": idx.sources(), "stats": idx.stats(), "job": dict(self.doc_job.state),
+                "embed": {"model": c.get("embed_model") or "", "running": self.emb.running()},
+                "llm_running": self.llm.running(), "pdf": bool(shutil.which("pdftotext"))}
+
+    def docs_action(self, b):
+        idx = self.doc_index()
+        if not idx:
+            return 400, {"error": "Choose storage first."}
+        act = b.get("action")
+        if act == "add":
+            try:
+                p = idx.add_source(str(b.get("path", "")), self.doc_private_paths())
+            except docchat.DocError as e:
+                return 400, {"error": str(e)}
+            return 200, {"ok": True, "path": p, "message": f"Added {p}. Press Index now to read it."}
+        if act == "remove":
+            n = idx.remove_source(str(b.get("path", "")))
+            return 200, {"ok": True, "message": f"Removed from the index ({n} files). Your files were not touched."}
+        if act == "index":
+            if self.doc_job.running():
+                return 409, {"error": "Indexing is already running."}
+            self.doc_job.start(idx, lambda: self.embedder(start=True), exclude=self.doc_private_paths())
+            return 200, {"ok": True, "job": dict(self.doc_job.state)}
+        if act == "cancel":
+            self.doc_job.cancel.set()
+            return 200, {"ok": True}
+        if act == "set-embed":
+            m = str(b.get("model") or "")
+            if m and m not in [x["path"] for x in tc.list_models(tc.load_settings()["extra_model_dirs"])]:
+                return 400, {"error": "The embedding model must be inside a configured model directory."}
+            p = tc.data_path("docs", "config.json")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tc.atomic_write(p, json.dumps(self.doc_config() | {"embed_model": m}), 0o600)
+            self.stop(self.emb)
+            return 200, {"ok": True, "message": "Embedding model saved. Re-index to compute vectors." if m else "Keyword search only."}
+        if act in ("ask", "search"):
+            q = str(b.get("question", "")).strip()
+            if not q:
+                return 400, {"error": "Type a question."}
+            if len(q) > 2000:
+                return 400, {"error": "Question too long (2000 characters max)."}
+            try:
+                emb, _ = self.embedder(start=False)
+            except RuntimeError:
+                emb = None
+            k = max(1, min(12, int(b.get("k") or 6)))
+            hits = idx.search(q, k=k, embedder=emb)
+            res = {"ok": True, "hits": [{"path": h["path"], "name": os.path.basename(h["path"]), "text": h["text"][:900],
+                                          "score": h["score"], "mode": h["mode"]} for h in hits]}
+            if not hits:
+                res["message"] = "Nothing in your indexed documents matches. Add a folder or re-index."
+                return 200, res
+            if act == "search":
+                return 200, res
+            if not self.llm.running():
+                res["message"] = "Start a model to get a written answer. These are the matching passages from your documents."
+                return 200, res
+            try:
+                res["answer"] = docchat.answer(q, hits, f"http://127.0.0.1:{UPSTREAM_PORT}", self.ensure_upstream_key())
+            except (OSError, ValueError, KeyError) as e:
+                res["message"] = f"The local model did not answer ({type(e).__name__}). Matching passages are shown."
+            return 200, res
+        return 400, {"error": "unknown documents action"}
 
     def llama_flags(self, binary):
         try:
@@ -304,11 +556,115 @@ class App:
         except (OSError, ValueError) as e:
             self.llm_verify = {"state": "failed", "error": f"Loaded but did not generate: {e}"}
             self.write_runtime(True, {"state": "failed"})
+            self.record_library_run(info, False, str(e))
             return
         name = (info.get("device") or {}).get("name")
         hostplan.record_verified(info["model"], info["backend"], name, info["ngl"], info["ctx"])
         self.llm_verify = {"state": "verified", "backend": info["backend"], "device": name}
+        self.record_library_run(info, True)
         self.write_runtime(True, {"state": "verified"})
+
+    # ---------------------------------------------------------- pc check --
+    def pc_check(self):
+        facts = collect_pc_facts(getattr(self, "last_speed", None))
+        report = pccheck.evaluate(facts)
+        saved = None
+        d = tc.data_path("reports")
+        if d:
+            try:
+                saved = pccheck.save_profile(d, facts, report)
+            except OSError as e:
+                saved = {"error": str(e)}
+        return {"report": report, "facts": facts, "saved": saved, "text": pccheck.as_text(report)}
+
+    def speed_test(self, n_tokens=64):
+        """Short real generation on the model that is already loaded. Never starts or downloads a model."""
+        import urllib.request
+        if not self.llm.running():
+            return {"error": "Start a model first. The speed test only uses the model that is already loaded."}
+        key = self.ensure_upstream_key()
+        req = urllib.request.Request(f"http://127.0.0.1:{UPSTREAM_PORT}/v1/chat/completions", method="POST",
+                                     data=json.dumps({"model": "victor-local", "max_tokens": n_tokens, "temperature": 0,
+                                                      "messages": [{"role": "user", "content": "Count from one to fifty in words, comma separated."}]}).encode(),
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                body = json.loads(r.read().decode())
+        except (OSError, ValueError) as e:
+            return {"error": f"Speed test failed: {e}"}
+        sp = pccheck.speed_from_response(body, time.time() - t0, n_tokens)
+        sp.update(backend=self.llm_info.get("backend"), model=self.llm_info.get("model"), ts=tc.now())
+        self.last_speed = sp
+        return {"ok": True, "speed": sp}
+
+
+    # ---------------------------------------------------------- library --
+    def library(self):
+        p = tc.data_path("settings", "library.json")
+        return modellib.Library(p) if p else None
+
+    def pc_id(self):
+        return modellib.pc_signature(model_advisor.cpu_info()["name"], [g.get("name") for g in tc.gpus()], tc.ram_info().get("total"))
+
+    def record_library_run(self, info, ok, note=None):
+        lib = self.library()
+        if lib and info.get("model"):
+            try:
+                lib.record_run(info["model"], self.pc_id(), info.get("backend"), (info.get("device") or {}).get("name"),
+                               info.get("ngl"), info.get("ctx"), ok, note)
+            except OSError:
+                pass
+
+    def library_list(self):
+        lib = self.library()
+        if not lib:
+            return {"error": "Choose storage first; the library is kept on your storage drive."}
+        s = tc.load_settings()
+        models = lib.describe(tc.list_models(s["extra_model_dirs"]), self.pc_id(), lambda p: tc.read_gguf_header(p)["meta"])
+        return {"models": models, "pc": self.pc_id(), "selected": s.get("model"),
+                "job": self.hash_job.status() if self.hash_job else {"state": "idle"}}
+
+    def library_action(self, b):
+        lib = self.library()
+        if not lib:
+            return 400, {"error": "Choose storage first."}
+        s = tc.load_settings()
+        known = {m["path"] for m in tc.list_models(s["extra_model_dirs"])}
+        act = b.get("action")
+        paths = b.get("paths") if isinstance(b.get("paths"), list) else ([b["path"]] if isinstance(b.get("path"), str) else [])
+        if act != "hash-all" and act != "cancel" and (not paths or any(p not in known for p in paths)):
+            return 400, {"error": "Model must be inside a configured model directory."}
+        if act in ("hash", "hash-all"):
+            if self.hash_job and self.hash_job.thread and self.hash_job.thread.is_alive():
+                return 409, {"error": "A hashing job is already running."}
+            if act == "hash" and b.get("expected"):
+                lib.set_expected(paths[0], str(b["expected"]))
+            self.hash_job = modellib.HashJob(lib)
+            return 200, {"ok": True, "job": self.hash_job.start(sorted(known) if act == "hash-all" else paths)}
+        if act == "cancel":
+            if self.hash_job:
+                self.hash_job.stop()
+            return 200, {"ok": True}
+        if act == "accept":
+            lib.reset_hash(paths[0])
+            return 200, {"ok": True, "message": "Reference checksum cleared; hash again to record the current file."}
+        if act == "remember":
+            keys = ("backend", "ctx", "ctx_auto", "gpu_layers", "threads")
+            src = b.get("settings") if isinstance(b.get("settings"), dict) else {k: s[k] for k in keys if k in s}
+            return 200, {"ok": True, "settings": lib.remember(paths[0], src), "message": "Settings remembered for this model."}
+        if act == "forget":
+            lib.forget_settings(paths[0])
+            return 200, {"ok": True, "message": "Remembered settings removed."}
+        if act == "apply":
+            saved = lib.entry(paths[0]).get("settings")
+            s["model"] = paths[0]
+            for k in ("backend", "ctx", "ctx_auto", "gpu_layers", "threads"):
+                if saved and k in saved:
+                    s[k] = saved[k]
+            tc.save_settings(s)
+            return 200, {"ok": True, "message": "Model selected" + (" with its remembered settings." if saved else ".")}
+        return 400, {"error": "unknown library action"}
 
     def stop_llm(self):
         self.write_runtime(False)
@@ -421,16 +777,77 @@ class App:
     def new_api_key(self):
         key = "victor-" + pysecrets.token_urlsafe(32)
         sec = tc.load_secrets()
-        sec["api_keys"] = [hashlib.sha256(key.encode()).hexdigest()]   # one active key; rotating revokes the old one
+        sec["api_keys"] = [hashlib.sha256(key.encode()).hexdigest()]   # rotate: replaces every key (named ones too)
+        sec["api_key_meta"] = {sec["api_keys"][0]: {"name": "Main key", "created": int(time.time()), "expires": None, "rpm": 0}}
+        apikeys.cancel_pairing(sec)
         tc.save_secrets(sec)
         s = tc.load_settings()
         if self.gw.running():
             self.start_gateway(s)
         return key
 
+    # ------------------------------------------------------ named keys --
+    def usage_path(self):
+        return tc.data_path("logs", "api-usage.jsonl")
+
+    def keys_status(self):
+        sec = tc.load_secrets()
+        up = self.usage_path()
+        use = apikeys.usage_summary(up) if up else {}
+        keys = apikeys.listing(sec)
+        for k in keys:
+            k["usage"] = use.get(k["id"], {"last_24h": 0, "errors_24h": 0, "last": None})
+        r = tc.load_settings()["remote"]
+        cert = tc.data_path("server", "tls", "cert.pem")
+        return {"keys": keys, "recent": apikeys.recent(up, 25) if up else [], "pairing": apikeys.pairing_state(sec),
+                "pair_ready": {"remote": bool(r["enabled"]), "tls": bool(r["tls"]), "cert": bool(cert and os.path.exists(cert)),
+                               "gateway": self.gw.running(), "bind": r["bind"], "port": r["port"]},
+                "lan_discovery": False}
+
+    def keys_action(self, b):
+        act = b.get("action")
+        sec = tc.load_secrets()
+        try:
+            if act == "create":
+                key, pub = apikeys.create(sec, b.get("name"), b.get("expires_days") or 0, b.get("rpm") or 0)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "api_key": key, "key": pub, "message": "Copy this key now. It is shown only once."}
+            if act == "revoke":
+                apikeys.revoke(sec, str(b.get("id", "")))
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "message": "Key revoked. It stops working immediately."}
+            if act == "pair-cancel":
+                apikeys.cancel_pairing(sec)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "message": "Pairing window closed."}
+            if act == "pair-start":
+                st = self.keys_status()["pair_ready"]
+                if not (st["remote"] and st["tls"] and st["cert"]):
+                    return 400, {"error": "Pair phone needs remote access turned on with TLS and a certificate, so the phone can pin this PC. "
+                                          "Set that up above first. Pairing stays off until then."}
+                host = str(b.get("host") or "").strip() or st["bind"]
+                if host in ("0.0.0.0", "::") or not re.fullmatch(r"[A-Za-z0-9.\-:]{1,253}", host):
+                    return 400, {"error": "Enter the address the phone should use (this PC's LAN or VPN IP, or its hostname)."}
+                fp = companion.tls_fingerprint()
+                if not fp:
+                    return 400, {"error": "The TLS certificate could not be read."}
+                pid = apikeys.profile_id(sec)
+                token, exp = apikeys.start_pairing(sec)
+                gw = f"https://{'[' + host + ']' if ':' in host else host}:{st['port']}"
+                uri = apikeys.pair_uri(pid, "VictorLinux " + (os.uname().nodename or "PC")[:40], gw, fp, token, exp)
+                tc.save_secrets(sec)
+                return 200, {"ok": True, "uri": uri, "svg": qrsvg.svg(uri), "expires": exp, "gateway": gw, "fingerprint_sha256": fp,
+                             "gateway_running": st["gateway"],
+                             "message": "Scan with the phone within 10 minutes. The QR holds a single-use pairing token, never an API key."}
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        return 400, {"error": "unknown keys action"}
+
     def revoke_remote(self):
         sec = tc.load_secrets()
         sec["api_keys"] = []
+        sec["api_key_meta"] = {}
+        apikeys.cancel_pairing(sec)
         tc.save_secrets(sec)
         s = tc.load_settings()
         s["remote"] = {"enabled": False, "bind": "127.0.0.1", "port": s["remote"]["port"], "tls": False}
@@ -543,6 +960,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/models":
                 s = tc.load_settings()
                 return self._send(200, {"models": tc.list_models(s["extra_model_dirs"]), "dirs": [tc.data_path("models")] + s["extra_model_dirs"]})
+            if u.path == "/api/library":
+                r = APP.library_list()
+                return self._send(400 if "error" in r else 200, r)
             if u.path == "/api/recommendations":
                 gl = tc.gpus()
                 s = tc.load_settings()
@@ -574,13 +994,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                         "disk": shutil.disk_usage(os.path.dirname(path)).free})
             if u.path == "/api/logs":
                 name = q.get("name", ["llama"])[0]
-                if name not in ("llama", "gateway") + tuple(SERVICES):
+                if name not in ("llama", "gateway", "embed") + tuple(SERVICES):
                     return self._send(400, {"error": "unknown log"})
                 return self._send(200, {"log": APP.tail(name, int(q.get("n", ["300"])[0]))})
             if u.path == "/api/fleet":
                 st = APP.fleet(["status"])
                 st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
                 return self._send(200, st)
+            if u.path == "/api/keys":
+                return self._send(200, APP.keys_status())
+
+
+            if u.path == "/api/health":
+                return self._send(200, APP.storage_health(q.get("refresh", ["0"])[0] == "1"))
+            if u.path == "/api/backups":
+                d = APP.backup_dir()
+                return self._send(200, {"backups": vbackup.list_backups(d) if d else [], "dir": d,
+                                        "gpg": bool(shutil.which("gpg")), "items": APP.BACKUP_ITEMS, "secret_items": APP.BACKUP_SECRETS})
+
+
+            if u.path == "/api/docs":
+                r = APP.docs_status()
+                return self._send(400 if "error" in r else 200, r)
+
+
+            if u.path == "/api/pccheck":
+                return self._send(200, APP.pc_check())
             if u.path == "/api/diagnostics":
                 return self._send(200, {"text": APP.diagnostics()})
             if u.path == "/api/import/status":
@@ -636,6 +1075,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/keys":
+                return self._send(*APP.keys_action(b))
+
+
+            if p == "/api/backups":
+                return self._send(*APP.backups_action(b))
+
+
+            if p == "/api/docs":
+                return self._send(*APP.docs_action(b))
+
+
+            if p == "/api/pccheck/speed":
+                r = APP.speed_test()
+                return self._send(400 if "error" in r else 200, r)
+
+
+            if p == "/api/library":
+                return self._send(*APP.library_action(b))
             if p == "/api/fleet/action":
                 return self._send(*APP.fleet_action(b))
             if p == "/api/llm/start":
@@ -804,6 +1262,7 @@ def main():
 
     def bye(*_):
         APP.stop_llm()
+        APP.stop(APP.emb)
         for p in APP.svc.values():
             APP.stop(p)
         os._exit(0)

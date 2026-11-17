@@ -3,7 +3,7 @@
 
 iso_name="victorlinux"
 iso_label="VICTOR_{{ platform|upper }}_{{ type|upper }}"
-iso_publisher="VictorLinux (Victorious fork) <https://github.com/Victorious93/ToriLinux>"
+iso_publisher="VictorLinux (Victorious fork) <https://github.com/Victorious93/VictorLinux>"
 iso_application="VictorLinux ({{ platform }}, {{ type }})"
 iso_version="{{ platform }}-{{ type }}{% if packs %}-{{ packs|join("+") }}{% endif %}-$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" "+%Y-%m-%d_%H-%M-%S")"
 install_dir="victor"

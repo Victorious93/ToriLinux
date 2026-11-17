@@ -15,6 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import victorstorage as vs  # noqa: E402
+import diskhealth  # noqa: E402
 
 RUN = "/run/victor"
 STATE = f"{RUN}/persist.json"
@@ -460,6 +461,16 @@ def cmd_ssh_reset(_a):
     print("SSH stopped, all authorized keys and listen settings removed.")
 
 
+def cmd_smart(a):
+    """Read-only SMART health of one local disk (partition paths are mapped to their disk). Never writes."""
+    if len(a) != 1:
+        die("usage: smart /dev/DISK")
+    try:
+        print(json.dumps(diskhealth.collect_smart(a[0])))
+    except ValueError as e:
+        die(str(e))
+
+
 def cmd_power(a):
     if a not in (["reboot"], ["poweroff"]):
         die("usage: power reboot|poweroff")
@@ -470,7 +481,7 @@ COMMANDS = {"list-storage": cmd_list_storage, "persist-mount": cmd_persist_mount
             "persist-temp": cmd_persist_temp, "mount-ro": cmd_mount_ro, "volume-mount": cmd_volume_mount,
             "volume-umount": cmd_volume_umount, "dest-prepare": cmd_dest_prepare, "dest-apply": cmd_dest_apply, "ssh-status": cmd_ssh_status,
             "ssh-add-key": cmd_ssh_add_key, "ssh-enable": cmd_ssh_enable, "ssh-disable": cmd_ssh_disable,
-            "ssh-reset": cmd_ssh_reset, "power": cmd_power}
+            "ssh-reset": cmd_ssh_reset, "power": cmd_power, "smart": cmd_smart}
 
 
 def main():

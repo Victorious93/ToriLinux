@@ -152,7 +152,7 @@ def full(iso, model, out):
         rec("desktop (Xorg+Xfce) up, Control Center autostarted", "Xorg" in o and "xfce4-session" in o and "victor-control" in o, o)
         vm.screenshot(f"{out}/desktop-boot1.png")
         rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme status; grep -o 'Adwaita-dark' /home/victor/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml | head -1; grep -o 'ColorBackground=.*' /home/victor/.config/xfce4/terminal/terminalrc; grep theme-name /etc/lightdm/lightdm-gtk-greeter.conf; test -d /usr/share/themes/Adwaita-dark && echo gtk-theme-installed")
-        rec("DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed", o.startswith("dark") and "gtk-theme-installed" in o and "1b1e26" in o and "Adwaita-dark" in o, o)
+        rec("DARK theme is the default (GTK/Xfce, terminal, greeter) and the GTK dark theme is installed", o.startswith("dark") and "gtk-theme-installed" in o and "0b0f1a" in o and "Adwaita-dark" in o, o)
         rc, o = vm.sh("runuser -u victor -- /usr/local/bin/victor-theme light; cat /run/victor/data/settings/ui.json")
         rec("light theme request is rejected", "always uses dark" in o, o)
         # ---- first run: owner password (offline)
