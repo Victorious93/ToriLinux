@@ -1,0 +1,3 @@
+# pi-headless: Raspberry Pi 5 / 4 / Zero 2 W. No desktop: gateway (llama-server behind victor-ctl) and CLI only.
+# On a Zero 2 W (512 MB RAM) LLM serving is disabled at boot and the device acts as a node.
+# Nothing extra beyond common.list on purpose: keep the image small for 512 MB boards.

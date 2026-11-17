@@ -1,0 +1,56 @@
+# Packages for EVERY Pi profile. One package per line; '#' starts a comment.
+# --- Raspberry Pi boot chain and kernels (archive.raspberrypi.com, pinned by apt/preferences in build.sh)
+raspi-firmware
+linux-image-rpi-v8
+linux-image-rpi-2712
+initramfs-tools
+raspi-utils
+# --- onboard Wi-Fi (brcmfmac) and Bluetooth (UART, hciuart/bthelper from pi-bluetooth)
+firmware-brcm80211
+bluez
+bluez-firmware
+pi-bluetooth
+wireless-regdb
+iw
+rfkill
+wpasupplicant
+network-manager
+# --- base system
+systemd-sysv
+systemd-timesyncd
+locales
+console-setup
+keyboard-configuration
+whiptail
+sudo
+polkitd
+pkexec
+ca-certificates
+openssl
+curl
+rsync
+jq
+zstd
+less
+nano
+htop
+usbutils
+nftables
+openssh-server
+udisks2
+parted
+fdisk
+e2fsprogs
+dosfstools
+exfatprogs
+# --- VictorLinux tools (victor-ctl, gateway, fleet) and llama.cpp runtime libraries
+python3
+python3-venv
+git
+libgomp1
+libssl3t64
+libstdc++6
+# --- phone tools (scrcpy itself is optional: hook 0250-optional-scrcpy from the Debian edition)
+adb
+fastboot
+android-sdk-platform-tools-common
