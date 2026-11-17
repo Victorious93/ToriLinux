@@ -3,7 +3,7 @@
 import argparse, json, os, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
-from victorlib import hw, storage, models, llama, api, bench, kali, diag
+from victorlib import hw, storage, models, llama, api, bench, kali, diag, modellib
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -22,6 +22,49 @@ def out(a, obj):
         print(obj)
 
 
+def _library():
+    return modellib.Library(os.path.join(data_path("settings"), "library.json"))
+
+
+def _pc_id():
+    snap = hw.snapshot(with_llama=False)
+    cpu = "?"
+    try:
+        cpu = next(l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name"))
+    except (OSError, StopIteration):
+        pass
+    return modellib.pc_signature(cpu, [g.get("desc") for g in snap.get("pci_gpus", [])], snap.get("ram", {}).get("total"))
+
+
+def library_cmd(a):
+    """Model library (same module as the Arch Control Center): integrity hashes and remembered settings."""
+    lib, base = _library(), data_path("models")
+    ms = [{"path": os.path.join(base, m["name"]), "name": m["name"], "size": m["size"]} for m in models.list_models()]
+    by_name = {m["name"]: m["path"] for m in ms}
+    def path_of(n):
+        if n not in by_name:
+            raise VictorError(f"no such model: {n} (see victor-ctl model list)")
+        return by_name[n]
+    if a.cmd == "library":
+        return lib.describe(ms, _pc_id())
+    if a.cmd == "hash":
+        names = a.names or list(by_name)
+        if a.expected:
+            if len(names) != 1:
+                raise VictorError("--expected needs exactly one model name")
+            lib.set_expected(path_of(names[0]), a.expected)
+        return {n: lib.hash_model(path_of(n)) for n in names}
+    if a.cmd == "accept":
+        lib.reset_hash(path_of(a.name)); return "reference checksum cleared; run 'victor-ctl model hash' again"
+    vals = {}
+    for kv in a.set:
+        k, _, v = kv.partition("=")
+        vals[k] = {"true": True, "false": False}.get(v.lower(), v) if k == "ctx_auto" else v
+    if not vals:
+        c = llama.load_config(); vals = {k: c[k] for k in ("backend", "ctx") if k in c}
+    return lib.remember(path_of(a.name), vals)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "fleet":      # fleet coordinator CLI lives in victor-fleet; same verbs, one entry point
         os.execv("/usr/local/bin/victor-fleet", ["victor-fleet", *sys.argv[2:]])
@@ -37,7 +80,10 @@ def main():
     st = g("storage", "status", "list", "select", "session", "check", "repair", "init")
     st["select"].add_argument("uuid")
     hwp = g("hw", "snapshot", "backend", "recommend")
-    mo = g("model", "list", "import", "inspect", "select", "remove")
+    mo = g("model", "list", "import", "inspect", "select", "remove", "library", "hash", "remember", "accept")
+    mo["hash"].add_argument("names", nargs="*"); mo["hash"].add_argument("--expected")
+    mo["remember"].add_argument("name"); mo["remember"].add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
+    mo["accept"].add_argument("name")
     mo["import"].add_argument("src"); mo["import"].add_argument("--sha256"); mo["import"].add_argument("--move", action="store_true")
     mo["inspect"].add_argument("path"); mo["select"].add_argument("name"); mo["remove"].add_argument("name")
     ll = g("llama", "start", "stop", "status", "config")
@@ -87,6 +133,8 @@ def main():
                 c = llama.load_config()
                 if not os.path.isfile(os.path.join(data_path("models"), a.name)): raise VictorError("no such model")
                 c["model"] = a.name; llama.save_config(c); out(a, f"selected {a.name}")
+            elif a.cmd in ("library", "hash", "remember", "accept"):
+                out(a, library_cmd(a))
             elif a.cmd == "remove":
                 if llama.is_running(): raise VictorError("Stop the service before removing models.")
                 os.unlink(os.path.join(data_path("models"), a.name)); out(a, "removed")
