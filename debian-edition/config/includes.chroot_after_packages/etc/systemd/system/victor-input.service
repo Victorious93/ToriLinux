@@ -1,0 +1,25 @@
+[Unit]
+Description=VictorLinux phone keyboard/mouse input (off by default)
+Documentation=https://github.com/Victorious93/VictorLinux/blob/main/docs/phone-as-keyboard.md
+After=network-online.target
+# Installed but not enabled. The owner starts this from the Control Center.
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/victor-input
+ExecStartPre=-/sbin/modprobe uinput
+ExecStart=/usr/local/bin/victor-input serve --bind ${VICTOR_INPUT_BIND:-0.0.0.0} --port ${VICTOR_INPUT_PORT:-8473}
+Restart=on-failure
+RestartSec=2
+# Needed to inject events through /dev/uinput.
+DeviceAllow=/dev/uinput rw
+# Do not log stdout: a pairing redeem could theoretically be invoked here; the
+# service itself never prints tokens.
+StandardOutput=journal
+StandardError=journal
+SyslogLevel=notice
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

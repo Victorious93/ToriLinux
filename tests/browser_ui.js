@@ -160,6 +160,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // API keys + opt-in phone pairing: off by default, key shown once, QR carries a single-use token and never an API key.
   await page.locator('[data-t="remote"]').click();
   await page.waitForFunction(() => /Pairing is off/.test(document.getElementById('pState').textContent));
+  await page.waitForFunction(() => /Off/i.test(document.getElementById('inState').textContent));
+  assert.match(await page.locator('#btState').innerText(), /Off/i);
+  assert.equal(await page.locator('#btCard').count(), 1);
+  assert.equal(await page.locator('#inCard').count(), 1);
+  const bg = await page.locator('#inCard').evaluate(el => getComputedStyle(el).backgroundColor);
+  assert.notEqual(bg, 'rgb(255, 255, 255)');
   assert.equal(await page.locator('#pQr svg').count(), 0);
   await page.click('#bPair');
   await page.waitForFunction(() => /needs remote access turned on with TLS/.test(document.getElementById('toast').textContent));

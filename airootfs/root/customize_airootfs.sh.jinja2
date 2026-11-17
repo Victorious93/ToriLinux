@@ -27,6 +27,10 @@ chown -R victor:victor /home/victor
 
 systemctl disable sshd.service 2>/dev/null || true
 systemctl mask sshd.socket 2>/dev/null || true
+# Bluetooth and the Wi-Fi input receiver stay off until the owner turns them on.
+# Installing bluez must not change that default, so do not enable either unit.
+systemctl disable bluetooth.service 2>/dev/null || true
+systemctl disable victor-input.service 2>/dev/null || true
 systemctl enable victor-boot-setup.service
 systemctl enable systemd-networkd.service
 

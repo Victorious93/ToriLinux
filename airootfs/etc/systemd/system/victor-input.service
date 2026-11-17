@@ -6,8 +6,9 @@ After=network-online.target
 
 [Service]
 Type=simple
+EnvironmentFile=-/etc/default/victor-input
 ExecStartPre=-/sbin/modprobe uinput
-ExecStart=/usr/local/bin/victor-input serve
+ExecStart=/usr/local/bin/victor-input serve --bind ${VICTOR_INPUT_BIND:-0.0.0.0} --port ${VICTOR_INPUT_PORT:-8473}
 Restart=on-failure
 RestartSec=2
 # Needed to inject events through /dev/uinput.

@@ -477,11 +477,92 @@ def cmd_power(a):
     os.execvp("systemctl", ["systemctl", a[0]])
 
 
+INPUT_ENV = "/etc/default/victor-input"
+INPUT_UNIT = "victor-input.service"
+
+
+def _write_input_env(bind, port):
+    os.makedirs(os.path.dirname(INPUT_ENV), exist_ok=True)
+    with open(INPUT_ENV, "w") as f:
+        f.write(f"VICTOR_INPUT_BIND={bind}\nVICTOR_INPUT_PORT={port}\n")
+    os.chmod(INPUT_ENV, 0o644)
+
+
+def _parse_input_args(a):
+    bind = a[0] if a else "0.0.0.0"
+    port = a[1] if len(a) > 1 else "8473"
+    if not port.isdigit() or not 1024 <= int(port) <= 65535:
+        die("port must be 1024-65535")
+    try:
+        ipaddress.ip_address(bind)
+    except ValueError:
+        if bind not in ("0.0.0.0", "::"):
+            die("bind must be an IP address")
+    return bind, port
+
+
+def cmd_input_enable(a):
+    bind, port = _parse_input_args(a)
+    _write_input_env(bind, port)
+    # Start now only. Never enable the unit on boot.
+    r = run(["systemctl", "start", INPUT_UNIT])
+    if r.returncode != 0:
+        die("victor-input failed to start: " + (r.stderr or r.stdout).strip())
+    print(json.dumps({"ok": True, "running": True, "bind": bind, "port": int(port), "enabled_on_boot": False,
+                      "firewall_note": "Open TCP %s only while this service is on, and only for the address you chose." % port}))
+
+
+def cmd_input_disable(_a):
+    run(["systemctl", "stop", INPUT_UNIT])
+    print(json.dumps({"ok": True, "running": False, "message": "Wi-Fi input is off. Paired devices stay listed until you revoke them."}))
+
+
+def cmd_input_status(_a):
+    active = run(["systemctl", "is-active", INPUT_UNIT]).stdout.strip()
+    enabled = run(["systemctl", "is-enabled", INPUT_UNIT]).stdout.strip()
+    print(json.dumps({"running": active == "active", "boot": enabled, "default_off": True}))
+
+
+def _bt(args):
+    exe = "/usr/local/bin/victor-bt-pair"
+    r = run([exe, *args], timeout=30)
+    if r.returncode != 0:
+        die((r.stderr or r.stdout).strip() or "victor-bt-pair failed")
+    print(r.stdout, end="" if r.stdout.endswith("\n") else "\n")
+
+
+def cmd_bt_start(_a):
+    # Starts bluetoothd for this session only; victor-bt-pair never enables it on boot.
+    _bt(["start"])
+
+
+def cmd_bt_confirm(_a):
+    _bt(["confirm"])
+
+
+def cmd_bt_cancel(_a):
+    _bt(["cancel"])
+
+
+def cmd_bt_status(_a):
+    _bt(["status"])
+
+
+def cmd_bt_list(_a):
+    _bt(["list"])
+
+
+def cmd_bt_unpair(a):
+    if len(a) != 1:
+        die("usage: bt-unpair MAC")
+    _bt(["unpair", a[0]])
+
+
 COMMANDS = {"list-storage": cmd_list_storage, "persist-mount": cmd_persist_mount, "persist-auto": cmd_persist_auto,
             "persist-temp": cmd_persist_temp, "mount-ro": cmd_mount_ro, "volume-mount": cmd_volume_mount,
             "volume-umount": cmd_volume_umount, "dest-prepare": cmd_dest_prepare, "dest-apply": cmd_dest_apply, "ssh-status": cmd_ssh_status,
             "ssh-add-key": cmd_ssh_add_key, "ssh-enable": cmd_ssh_enable, "ssh-disable": cmd_ssh_disable,
-            "ssh-reset": cmd_ssh_reset, "power": cmd_power, "smart": cmd_smart}
+            "ssh-reset": cmd_ssh_reset, "power": cmd_power, "smart": cmd_smart, "input-enable": cmd_input_enable, "input-disable": cmd_input_disable, "input-status": cmd_input_status, "bt-start": cmd_bt_start, "bt-confirm": cmd_bt_confirm, "bt-cancel": cmd_bt_cancel, "bt-status": cmd_bt_status, "bt-list": cmd_bt_list, "bt-unpair": cmd_bt_unpair}
 
 
 def main():

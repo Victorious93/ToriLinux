@@ -184,6 +184,26 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:14px 24px 28px;
   <div id="pState" class="mut"></div>
   <div class="row"><div><label for="pHost">Address the phone should use</label><input id="pHost" placeholder="LAN or VPN IP / hostname" style="width:220px"></div><button class="b" id="bPair">Pair phone</button><button class="b s" id="bPairStop" hidden>Close pairing</button></div>
   <div id="pQr"></div></div>
+
+ <div class="card" id="btCard"><h2>Pair phone (Bluetooth)</h2>
+  <p class="mut">Lets the <b>Victorious Keyboard</b> app act as a standard Bluetooth keyboard and mouse. Bluetooth stays off by default. This makes the PC discoverable for 120 seconds, shows the passkey, and trusts the phone only after you confirm. It does not enable Bluetooth on boot.</p>
+  <div id="btState" class="mut">Off by default.</div>
+  <div class="row"><button class="b" id="bBtStart">Pair phone (Bluetooth)</button><button class="b" id="bBtConfirm">Confirm passkey</button><button class="b s" id="bBtCancel">Cancel</button></div>
+  <div id="btPass" class="mut"></div>
+  <div class="table-wrap"><table id="btTable"></table></div></div>
+ <div class="card" id="inCard"><h2>Wi-Fi keyboard (off until you turn it on)</h2>
+  <p class="mut">An optional WebSocket input service for Victorious Keyboard on the LAN. Auth uses the same <code>victorpc://pair</code> QR flow (v1) and a per-device Bearer token, never stored in the QR. The service is off by default, the admin toggle is localhost-only, and unauthenticated or replayed messages are rejected. See <code>docs/VICTOR_INPUT_PROTOCOL.md</code>.</p>
+  <div id="inState" class="mut">Off by default.</div>
+  <p id="inFw" class="mut"></p>
+  <div class="row"><div><label for="inBind">Listen address</label><input id="inBind" value="0.0.0.0" style="width:150px"></div>
+   <div><label for="inPort">Port</label><input id="inPort" type="number" value="8473" style="width:90px"></div>
+   <button class="b" id="bInOn">Turn on Wi-Fi input</button><button class="b d" id="bInOff">Turn off</button></div>
+  <div class="row"><div><label for="inHost">Address the phone should use</label><input id="inHost" placeholder="LAN or VPN IP / hostname" style="width:220px"></div>
+   <button class="b" id="bInPair">Pair phone (Wi-Fi keyboard)</button><button class="b s" id="bInPairStop" hidden>Close pairing</button></div>
+  <div id="inQr"></div>
+  <div class="table-wrap"><table id="inTable"></table></div></div>
+ <div class="card"><h2>USB keyboard and mouse</h2>
+  <p class="mut">Victorious Keyboard can also act as a USB keyboard and mouse over a data cable (root and ConfigFS on the phone). That needs no PC software. This has not been tried on a real VictorLinux boot, so treat it as <b>Likely</b>. Details: <code>docs/phone-as-keyboard.md</code>.</p></div>
  <div class="card"><h2><svg><use href="#i-lock"/></svg>SSH (off by default)</h2><div id="sshState"></div>
   <label>Public key (ssh-ed25519 …)</label><input id="sshKey" style="width:100%">
   <div class="row"><button class="b s" id="bSshAdd">Add key</button><input id="sshListen" value="127.0.0.1" style="width:150px" title="Listen address">
@@ -216,7 +236,7 @@ function res(j,okm){if(j&&(j.ok===false||j.error)){toast(j.error||"failed","bad"
 const G=n=>n==null?"?":(n/2**30).toFixed(1)+" GiB";
 const tabs=[["dash","home","Dashboard"],["models","cube","Models"],["docs","doc","Documents"],["storage","disk","Storage"],["remote","net","Server & Access"],["fleet","fleet","Fleet"],["logs","log","Logs & Diagnostics"]];
 $("nav").innerHTML=tabs.map(t=>`<button role="tab" id="tab-${t[0]}" aria-controls="t-${t[0]}" data-t="${t[0]}" tabindex="-1"><svg><use href="#i-${t[1]}"/></svg>${t[2]}</button>`).join("");
-function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on));b.tabIndex=on?0:-1});sessionStorage.tab=t;if(t==="storage"){loadStorage();loadHealth();loadBackups()}if(t==="models")loadLibrary();if(t==="fleet")loadFleet();if(t==="logs")loadLog();if(t==="docs")loadDocs();if(t==="remote")loadKeys()}
+function show(t){if(!tabs.some(x=>x[0]===t))t="dash";document.querySelectorAll("section").forEach(s=>{s.classList.toggle("on",s.id==="t-"+t);s.setAttribute("role","tabpanel");s.setAttribute("aria-labelledby",s.id.replace("t-","tab-"))});document.querySelectorAll("nav button").forEach(b=>{const on=b.dataset.t===t;b.classList.toggle("on",on);b.setAttribute("aria-selected",String(on));b.tabIndex=on?0:-1});sessionStorage.tab=t;if(t==="storage"){loadStorage();loadHealth();loadBackups()}if(t==="models")loadLibrary();if(t==="fleet")loadFleet();if(t==="logs")loadLog();if(t==="docs")loadDocs();if(t==="remote"){loadKeys();loadInput();loadBt()}}
 async function fleetAct(cmd,arg){const j=await api("/api/fleet/action",{cmd,arg});if(j.error){toast(j.error,"bad");return}if(cmd==="pair"){$("fOut").textContent="PAIRING (single use, expires in "+j.expires_in_s+"s)\nCoordinator: "+j.coordinator_url+"\nVerify this fingerprint matches the phone's screen BEFORE approving:\n  "+j.coordinator_fingerprint_sha256+"\nPairing secret (type it on the phone):\n  "+j.pairing_secret}else if(cmd==="review"||cmd==="report"){$("fOut").textContent=JSON.stringify(j,null,2)}else{toast(j.message||"Done")}loadFleet(cmd==="pair"||cmd==="review"||cmd==="report")}
 async function loadFleet(keep){const s=await api("/api/fleet");if(s.error){$("fOut").textContent=s.error;return}
  if(!keep)$("fOut").textContent=s.running?("running on "+s.bind+(s.network_enabled?"":" (local-only)")+"\nfingerprint sha256:"+s.fingerprint_sha256+"\njobs: "+JSON.stringify(s.job_counts)+(s.durability_warning?"\nWARNING: "+s.durability_warning:"")):"Coordinator is stopped."+(s.persistence&&!s.persistence.durable?"\nWARNING: state would NOT be durable: "+s.persistence.reason:"");
@@ -424,7 +444,42 @@ $("dSrc").onclick=async e=>{const b=e.target.closest("[data-docrm]");if(b&&confi
 document.querySelectorAll("label").forEach(label=>{const next=label.nextElementSibling;if(next&&next.id&&["INPUT","SELECT"].includes(next.tagName))label.htmlFor=next.id});
 // Loading state: every action button shows a spinner and is disabled until its request finishes.
 async function busy(btn,fn){if(btn.classList.contains("busy"))return;btn.classList.add("busy");btn.setAttribute("aria-busy","true");btn.disabled=true;try{return await fn()}finally{btn.classList.remove("busy");btn.removeAttribute("aria-busy");btn.disabled=false;if(S){$("bStart").disabled=S.llm.running;$("bStop").disabled=!S.llm.running&&!S.gateway.running}}}
-for(const id of ["bStart","bStop","bSave","bEst","bImp","bDir","bDs","bTemp","bRem","bKey","bRev","bTls","bCap","bSshAdd","bSshOn","bSshOff","bSshReset","bLog","bDiag","bAdvice","bReboot","bOff","bAsk","bDocSearch","bDocAdd","bDocIndex","bDocEmb","bPc","bSpeed","bHealth","bBackup","bInspect","bRestore","bKNew","bPair","bPairStop"]){const el=$(id),f=el.onclick;if(f)el.onclick=e=>busy(el,()=>f.call(el,e))}
+
+async function loadInput(){
+  const j=await api("/api/input");
+  if(j.error){$("inState").innerHTML=`<span class="bad">${esc(j.error)}</span>`;return}
+  const on=!!j.running;
+  $("inState").innerHTML=on?`<span class="ok">On</span> — listening on ${esc(String(j.bind||""))}:${esc(String(j.port||""))}. Paired devices: ${(j.devices||[]).length}.`
+    :`<span class="mut">Off.</span> Nothing listens until you turn it on.`;
+  $("inFw").textContent=j.firewall_note||"";
+  if(j.bind)$("inBind").value=j.bind; if(j.port)$("inPort").value=j.port;
+  $("bInPairStop").hidden=!(j.pairing&&j.pairing.active);
+  if(!(j.pairing&&j.pairing.active))$("inQr").innerHTML="";
+  $("inTable").innerHTML=(j.devices||[]).length?"<tr><th>Device</th><th></th></tr>"+(j.devices||[]).map(d=>`<tr><td>${esc(d.name)} <span class="mut">${esc(d.id)}</span></td><td><button class="b d" data-inrev="${esc(d.id)}">Revoke</button></td></tr>`).join(""):`<tr><td class="mut">No paired keyboards.</td></tr>`;
+}
+async function loadBt(){
+  const j=await api("/api/bluetooth");
+  if(j.error){$("btState").innerHTML=`<span class="mut">${esc(j.error||"Bluetooth helper is not available here.")}</span>`;$("btTable").innerHTML="";return}
+  const p=j.pairing||{};
+  $("btState").innerHTML=p.active?`<span class="ok">Discoverable</span> until this window closes. Confirm the passkey before the phone is trusted.`
+    :`<span class="mut">Off by default.</span> ${esc(j.message||"")}`.trim();
+  $("btPass").innerHTML=p.passkey?`<b>Passkey: ${esc(p.passkey)}</b> — compare it with the phone, then confirm.`:(p.waiting_for_confirm?"Waiting for a phone…":"");
+  $("btTable").innerHTML=(j.devices||[]).length?"<tr><th>Device</th><th></th></tr>"+(j.devices||[]).map(d=>`<tr><td>${esc(d.name||"")} <span class="mut">${esc(d.mac||"")}${d.paired?" · paired":""}</span></td><td><button class="b d" data-btun="${esc(d.mac||"")}">Unpair</button></td></tr>`).join(""):`<tr><td class="mut">No paired Bluetooth phones.</td></tr>`;
+}
+$("bInOn").onclick=async()=>{const j=await api("/api/input",{action:"enable",bind:$("inBind").value,port:$("inPort").value});if(j.error){toast(j.error,"bad");return}toast(j.message||"Wi-Fi input is on");loadInput()};
+$("bInOff").onclick=async()=>{const j=await api("/api/input",{action:"disable"});if(j.error){toast(j.error,"bad");return}toast(j.message||"Wi-Fi input is off");loadInput()};
+$("bInPair").onclick=async()=>{const j=await api("/api/input",{action:"pair-start",host:$("inHost").value});if(j.error){toast(j.error,"bad");return}
+  $("inQr").innerHTML=(j.svg||"")+`<p class="mut">${esc(j.message||"")}</p>`;$("bInPairStop").hidden=false;toast("Scan the QR within 10 minutes")};
+$("bInPairStop").onclick=async()=>{res(await api("/api/input",{action:"pair-cancel"}));loadInput()};
+$("bBtStart").onclick=async()=>{const j=await api("/api/bluetooth",{action:"start"});if(j.error){toast(j.error,"bad");return}toast(j.message||"Discoverable for 120 seconds");loadBt()};
+$("bBtConfirm").onclick=async()=>{const j=await api("/api/bluetooth",{action:"confirm"});if(j.error){toast(j.error,"bad");return}toast(j.message||"Trusted");loadBt()};
+$("bBtCancel").onclick=async()=>{const j=await api("/api/bluetooth",{action:"cancel"});if(j.error){toast(j.error,"bad");return}toast(j.message||"Cancelled");loadBt()};
+document.addEventListener("click",e=>{
+  const r=e.target.closest("[data-inrev]"); if(r){api("/api/input",{action:"revoke",id:r.dataset.inrev}).then(j=>{if(j.error)toast(j.error,"bad");else{toast(j.message||"Revoked");loadInput()}});return}
+  const u=e.target.closest("[data-btun]"); if(u){if(!confirm("Unpair this phone? It will no longer control this PC over Bluetooth."))return;api("/api/bluetooth",{action:"unpair",mac:u.dataset.btun}).then(j=>{if(j.error)toast(j.error,"bad");else{toast(j.message||"Unpaired");loadBt()}})}
+});
+
+for(const id of ["bStart","bStop","bSave","bEst","bImp","bDir","bDs","bTemp","bRem","bKey","bRev","bTls","bCap","bSshAdd","bSshOn","bSshOff","bSshReset","bLog","bDiag","bAdvice","bReboot","bOff","bAsk","bDocSearch","bDocAdd","bDocIndex","bDocEmb","bPc","bSpeed","bHealth","bBackup","bInspect","bRestore","bKNew","bPair","bPairStop","bInOn","bInOff","bInPair","bInPairStop","bBtStart","bBtConfirm","bBtCancel"]){const el=$(id),f=el.onclick;if(f)el.onclick=e=>busy(el,()=>f.call(el,e))}
 document.addEventListener("click",e=>{if(e.target.closest("#bRetry"))busy(e.target.closest("#bRetry"),refresh)});
 show(sessionStorage.tab||"dash");refresh();loadStorage();setInterval(refresh,4000);
 </script></body></html>

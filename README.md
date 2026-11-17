@@ -33,6 +33,7 @@ Inference runs on the **PC's** hardware, with no telemetry, no automatic downloa
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
 | **Fleet** | Optional coordination of 3–4 phones ([fleet integration](docs/fleet-integration.md)); off until you turn it on |
 | **Phone mirroring** | Optional `victor-phone` (scrcpy) to mirror and control a USB-connected Android phone, with audio and recording. The image still builds if scrcpy is missing ([notes](docs/phone-mirroring.md)) |
+| **Phone as keyboard** | Optional Bluetooth pairing and a Wi-Fi input service so [Victorious Keyboard](https://github.com/Victorious93/Victorious-Keyboard) can type and move the pointer on this PC. Both stay off until you turn them on. USB HID from the phone needs no PC software ([notes](docs/phone-as-keyboard.md), [protocol](docs/VICTOR_INPUT_PROTOCOL.md)) |
 
 ## Screenshots
 
@@ -182,7 +183,7 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 
 [Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
 [Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
-[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
+[Phone mirroring](docs/phone-mirroring.md) · [Phone as keyboard](docs/phone-as-keyboard.md) · [Debian edition](debian-edition/README.md)
 [Fleet integration plan](docs/FLEET_INTEGRATION_PLAN.md) · [Clients](docs/clients.md)
 
 ## Status and testing
