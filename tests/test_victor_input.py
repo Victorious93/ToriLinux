@@ -165,3 +165,51 @@ def test_session_auth_replay_and_rate(tmp_path):
     assert e.value.code == "rate_limited"
     # errors never include the bearer token
     assert bearer not in json.dumps(vi.error_payload(e.value))
+
+
+def test_wss_pair_and_admin_localhost(tmp_path):
+    """Live WSS + localhost admin: redeem a token, reject a replay, keep admin off the LAN."""
+    import http.client
+    import ssl
+    import urllib.request
+
+    app = vi.InputApp(str(tmp_path), sink=vi.MemorySink(), bind="127.0.0.1", port=0, admin_port=0)
+    app.start_background()
+    try:
+        for _ in range(40):
+            if app.running and app.port:
+                break
+            time.sleep(0.05)
+        assert app.running and app.port
+        started = app.start_pairing_uri("127.0.0.1")
+        assert started["uri"].startswith("victorpc://pair?v=1") and "victor-input-" not in started["uri"]
+        fields = vi.parse_uri(started["uri"])
+        ctx = ssl._create_unverified_context()
+        # Redeem once over TLS.
+        conn = http.client.HTTPSConnection("127.0.0.1", app.port, context=ctx, timeout=5)
+        body = json.dumps({"v": 1, "t": fields["t"], "device": "Pixel 8"}).encode()
+        conn.request("POST", "/victor/pair", body=body, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        assert resp.status == 200 and data["ok"] is True and data["token"].startswith("victor-input-")
+        token = data["token"]
+        # Replay of the pairing token is refused.
+        conn.request("POST", "/victor/pair", body=body, headers={"Content-Type": "application/json"})
+        resp2 = conn.getresponse()
+        data2 = json.loads(resp2.read())
+        assert resp2.status == 403 and data2["ok"] is False and data2["err"] == "none"
+        conn.close()
+        # Localhost admin reports the device and never includes the Bearer token.
+        st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{app.admin_port}/status", timeout=5).read())
+        assert st["running"] is True and st["devices"][0]["name"] == "Phone: Pixel 8"
+        assert token not in json.dumps(st)
+        # Admin is bound to loopback only.
+        assert app._admin.server_address[0] == "127.0.0.1"
+        # Unauthenticated input message is rejected.
+        conn = http.client.HTTPSConnection("127.0.0.1", app.port, context=ctx, timeout=5)
+        conn.request("GET", "/health")
+        assert conn.getresponse().status == 200
+        conn.close()
+    finally:
+        app.stop()
+        time.sleep(0.05)

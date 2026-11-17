@@ -445,12 +445,7 @@ def tls_paths(root=None):
 
 
 def cert_sha256_hex(cert_pem_path):
-    from datetime import datetime, timezone
-    try:
-        from datetime import UTC  # noqa
-    except ImportError:
-        UTC = timezone.utc
-    # Parse PEM and hash the DER certificate (same as the gateway fingerprint).
+    """Parse PEM and hash the DER certificate (same as the gateway fingerprint)."""
     pem = open(cert_pem_path, "rb").read()
     start, end = b"-----BEGIN CERTIFICATE-----", b"-----END CERTIFICATE-----"
     a, b = pem.find(start), pem.find(end)
@@ -592,3 +587,245 @@ def default_off_status():
         "devices": [], "pairing": {"active": False}, "default_off": True,
         "bluetooth_default": "off",
     }
+
+
+
+# -------------------------------------------------------------------------------- HTTP / WSS server --
+class InputApp:
+    """WSS input server plus a localhost-only admin toggle. Off unless start() is called."""
+
+    def __init__(self, root, sink=None, bind="0.0.0.0", port=DEFAULT_PORT, admin_port=ADMIN_PORT):
+        self.root = root
+        self.bind = bind
+        self.port = int(port)
+        self.admin_port = int(admin_port)
+        self.sink = sink or MemorySink()
+        self.sec = load_secrets(root)
+        self.session = InputSession(self.sec, self.sink, root)
+        self._httpd = None
+        self._admin = None
+        self._threads = []
+        self.running = False
+        self.tls_fp = None
+        self.cert = None
+
+    def status(self):
+        st = default_off_status()
+        st.update({
+            "enabled": True, "running": self.running, "bind": self.bind, "port": self.port,
+            "admin_port": self.admin_port, "devices": listing(self.sec),
+            "pairing": pairing_state(self.sec), "fingerprint_sha256": self.tls_fp,
+            "default_off": True, "firewall_note": firewall_note(self.bind, self.port),
+        })
+        return st
+
+    def start_pairing_uri(self, host, now=None):
+        host = (host or "").strip()
+        if host in ("0.0.0.0", "::", "") or not re.fullmatch(r"[A-Za-z0-9.\-:]{1,253}", host):
+            raise ValueError("Enter the address the phone should use (this PC's LAN or VPN IP, or its hostname).")
+        cert, _key, fp = ensure_tls(self.root)
+        self.cert, self.tls_fp = cert, fp
+        token, exp = start_pairing(self.sec, now=now)
+        pid = apikeys.profile_id(self.sec)
+        host_url = host if ":" not in host or host.startswith("[") else f"[{host}]"
+        if ":" in host and not host.startswith("["):
+            host_url = f"[{host}]"
+        else:
+            host_url = host
+        uri = pair_uri(pid, "VictorLinux " + (os.uname().nodename or "PC")[:40],
+                       f"wss://{host_url}:{self.port}", fp, token, exp)
+        save_secrets(self.sec, self.root)
+        return {"ok": True, "uri": uri, "expires": exp, "input": f"wss://{host_url}:{self.port}",
+                "fingerprint_sha256": fp,
+                "message": "Scan with the phone within 10 minutes. The QR holds a single-use pairing token, never a Bearer token."}
+
+    def cancel_pairing_save(self):
+        cancel_pairing(self.sec)
+        save_secrets(self.sec, self.root)
+        return {"ok": True, "message": "Pairing window closed."}
+
+    def redeem_pair(self, body):
+        if not isinstance(body, dict) or body.get("v") != 1:
+            return 400, {"v": 1, "ok": False, "err": "bad_message"}
+        try:
+            token, pub = redeem(self.sec, body.get("t"), body.get("device"))
+        except apikeys.PairError as e:
+            save_secrets(self.sec, self.root)
+            return 403, {"v": 1, "ok": False, "err": e.args[0]}
+        save_secrets(self.sec, self.root)
+        # Token is returned once to the phone; never written to logs by the caller.
+        return 200, {"v": 1, "ok": True, "token": token, "device_id": pub["id"], "name": pub["name"]}
+
+    def revoke_device(self, kid):
+        n = revoke(self.sec, str(kid))
+        save_secrets(self.sec, self.root)
+        return {"ok": True, "revoked": n}
+
+    def serve_forever(self):
+        cert, key, fp = ensure_tls(self.root)
+        self.cert, self.tls_fp = cert, fp
+        ctx, self.tls_fp, self.cert = ssl_context(self.root)
+        public = ThreadingHTTPServer((self.bind, self.port), _make_public_handler(self))
+        public.socket = ctx.wrap_socket(public.socket, server_side=True)
+        admin = ThreadingHTTPServer(("127.0.0.1", self.admin_port), _make_admin_handler(self))
+        self.port = public.server_address[1]
+        self.admin_port = admin.server_address[1]
+        self._httpd, self._admin = public, admin
+        self.running = True
+        t = threading.Thread(target=admin.serve_forever, daemon=True)
+        t.start()
+        self._threads.append(t)
+        try:
+            public.serve_forever()
+        finally:
+            self.running = False
+            admin.shutdown()
+
+    def start_background(self):
+        t = threading.Thread(target=self.serve_forever, daemon=True)
+        t.start()
+        self._threads.append(t)
+        for _ in range(50):
+            if self.running:
+                return self
+            time.sleep(0.05)
+        return self
+
+    def stop(self):
+        if self._httpd:
+            self._httpd.shutdown()
+        if self._admin:
+            self._admin.shutdown()
+        self.running = False
+
+
+def firewall_note(bind, port):
+    return (f"This service listens on {bind}:{port}. If a firewall is active (the Debian edition "
+            f"drops inbound traffic by default), open TCP port {port} only while the input service "
+            f"is on, and only for the address you chose. Loopback needs no firewall change. "
+            f"Close the port when you turn the service off.")
+
+
+def _json_body(handler):
+    n = int(handler.headers.get("Content-Length") or 0)
+    if n > MSG_MAX:
+        return None
+    raw = handler.rfile.read(n) if n else b"{}"
+    try:
+        return json.loads(raw.decode())
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _send_json(handler, code, obj):
+    data = json.dumps(obj).encode()
+    handler.send_response(code)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _make_public_handler(app):
+    class Public(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, fmt, *args):
+            # Never log tokens, pairing secrets or message bodies.
+            return
+
+        def do_GET(self):
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                return self._ws()
+            if self.path.split("?")[0] in ("/", "/health"):
+                return _send_json(self, 200, {"v": 1, "service": "victor-input", "ok": True})
+            self.send_error(404)
+
+        def do_POST(self):
+            if self.path.split("?")[0] != "/victor/pair":
+                return self.send_error(404)
+            body = _json_body(self)
+            if body is None:
+                return _send_json(self, 400, {"v": 1, "ok": False, "err": "bad_message"})
+            code, obj = app.redeem_pair(body)
+            # The response may contain a one-time Bearer token; it is not logged.
+            return _send_json(self, code, obj)
+
+        def _ws(self):
+            key = self.headers.get("Sec-WebSocket-Key")
+            if not key:
+                return self.send_error(400)
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", ws_accept(key))
+            self.end_headers()
+            sock = self.connection
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            bearer = _bearer(self.headers, q)
+            device_id = None
+            if bearer:
+                h, _meta, err = check_token(app.sec, bearer)
+                if err:
+                    ws_send(sock, json.dumps({"v": 1, "type": "error", "err": "unauthorized"}))
+                    return
+                device_id = apikeys.key_id(h)
+                ws_send(sock, json.dumps({"v": 1, "type": "ok", "device_id": device_id}))
+            try:
+                while True:
+                    raw = ws_read(sock)
+                    if raw is None:
+                        break
+                    if raw == b"":
+                        continue
+                    try:
+                        msg = parse_message(raw)
+                        if msg["type"] == "auth":
+                            out = app.session.handle(raw)
+                            device_id = out["device_id"]
+                            ws_send(sock, json.dumps(out))
+                            continue
+                        if not device_id:
+                            raise AuthError("unauthorized", "missing token")
+                        out = app.session.handle(raw, device_id=device_id)
+                        ws_send(sock, json.dumps(out))
+                    except (ProtocolError, AuthError) as e:
+                        ws_send(sock, json.dumps(error_payload(e)))
+                        if isinstance(e, AuthError) and not device_id:
+                            break
+            except (ConnectionError, OSError, ssl.SSLError):
+                return
+    return Public
+
+
+def _make_admin_handler(app):
+    class Admin(BaseHTTPRequestHandler):
+        """Localhost-only control: enable is the systemd unit; this toggles pairing and reports status."""
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, fmt, *args):
+            return
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            if path == "/status":
+                return _send_json(self, 200, app.status())
+            if path == "/devices":
+                return _send_json(self, 200, {"devices": listing(app.sec)})
+            self.send_error(404)
+
+        def do_POST(self):
+            path = self.path.split("?")[0]
+            body = _json_body(self) or {}
+            try:
+                if path == "/pair-start":
+                    return _send_json(self, 200, app.start_pairing_uri(body.get("host")))
+                if path == "/pair-cancel":
+                    return _send_json(self, 200, app.cancel_pairing_save())
+                if path == "/revoke":
+                    return _send_json(self, 200, app.revoke_device(body.get("id")))
+            except ValueError as e:
+                return _send_json(self, 400, {"error": str(e)})
+            self.send_error(404)
+    return Admin

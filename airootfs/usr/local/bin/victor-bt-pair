@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""victor-bt-pair: make this PC pairable so a phone can act as a Bluetooth keyboard and mouse.
+
+Bluetooth stays off by default. This helper starts bluetoothd only for the session,
+makes the adapter discoverable and pairable for 120 seconds, shows the passkey, and
+trusts the device only after the owner confirms. It never enables bluetooth.service
+on boot and never prints long-lived secrets.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+TIMEOUT = 120
+STATE_DIR = os.environ.get("VICTOR_BT_DIR") or "/run/victorlinux/bt-pair"
+MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def state_path():
+    return os.path.join(STATE_DIR, "state.json")
+
+
+def load_state():
+    try:
+        with open(state_path()) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(st):
+    os.makedirs(STATE_DIR, exist_ok=True, mode=0o700)
+    path = state_path()
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(st, f, indent=2, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def out(obj, code=0):
+    json.dump(obj, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    raise SystemExit(code)
+
+
+def which_bt():
+    return shutil.which("bluetoothctl")
+
+
+def run_bt(args, timeout=15, dry=False):
+    cmd = ["bluetoothctl", *args]
+    if dry:
+        return {"cmd": cmd, "stdout": "", "returncode": 0}
+    if not which_bt():
+        raise SystemExit("bluetoothctl is not installed (package bluez-utils or bluez). Bluetooth pairing is optional.")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return {"cmd": cmd, "stdout": r.stdout, "stderr": r.stderr, "returncode": r.returncode}
+
+
+def systemctl(args, dry=False):
+    cmd = ["systemctl", *args]
+    if dry:
+        return cmd
+    subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    return cmd
+
+
+def parse_devices(text):
+    rows = []
+    for line in text.splitlines():
+        # "Device AA:BB:CC:DD:EE:FF Name here"
+        m = re.search(r"Device\s+(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(.*)$", line)
+        if m:
+            rows.append({"mac": m.group(1).upper(), "name": m.group(3).strip()})
+    return rows
+
+
+def cmd_list(dry=False):
+    if dry:
+        out({"ok": True, "dry_run": True, "commands": [["bluetoothctl", "devices"], ["bluetoothctl", "devices", "Paired"]]})
+    r = run_bt(["devices"])
+    paired = run_bt(["devices", "Paired"])
+    devices = parse_devices(r["stdout"])
+    paired_macs = {d["mac"] for d in parse_devices(paired["stdout"])}
+    for d in devices:
+        d["paired"] = d["mac"] in paired_macs
+    out({"ok": True, "devices": devices, "bluetoothctl": bool(which_bt())})
+
+
+def cmd_unpair(mac, dry=False):
+    mac = mac.strip().upper()
+    if not MAC_RE.match(mac):
+        out({"error": "Address must look like AA:BB:CC:DD:EE:FF."}, 1)
+    if dry:
+        out({"ok": True, "dry_run": True, "commands": [["bluetoothctl", "untrust", mac], ["bluetoothctl", "remove", mac]]})
+    run_bt(["untrust", mac])
+    r = run_bt(["remove", mac])
+    if r["returncode"] != 0:
+        out({"error": "Could not remove that device. Is the address correct?"}, 1)
+    out({"ok": True, "message": f"Removed {mac}. It can no longer control this PC over Bluetooth."})
+
+
+def cmd_status(dry=False):
+    st = load_state()
+    active = bool(st.get("active")) and time.time() < st.get("expires", 0)
+    if dry:
+        out({"ok": True, "dry_run": True, "active": False, "timeout": TIMEOUT, "default": "off",
+             "commands": [["systemctl", "is-active", "bluetooth"], ["bluetoothctl", "show"]]})
+    svc = subprocess.run(["systemctl", "is-active", "bluetooth"], capture_output=True, text=True).stdout.strip() if shutil.which("systemctl") else "unknown"
+    show = run_bt(["show"])["stdout"] if which_bt() else ""
+    powered = "Powered: yes" in show
+    discoverable = "Discoverable: yes" in show
+    out({
+        "ok": True, "default": "off", "service": svc, "powered": powered, "discoverable": discoverable,
+        "pairing": {"active": active, "expires": st.get("expires"), "pending_mac": st.get("pending_mac"),
+                    "pending_name": st.get("pending_name"), "passkey": st.get("passkey") if active else None,
+                    "waiting_for_confirm": bool(st.get("passkey") and active and not st.get("confirmed"))},
+        "message": "Bluetooth stays off by default. Use 'victor-bt-pair start' to make this PC discoverable for 120 seconds.",
+    })
+
+
+def cmd_cancel(dry=False):
+    if dry:
+        out({"ok": True, "dry_run": True, "commands": [
+            ["bluetoothctl", "discoverable", "off"], ["bluetoothctl", "pairable", "off"],
+        ]})
+    st = load_state()
+    st["active"] = False
+    st["cancelled"] = True
+    st.pop("passkey", None)
+    save_state(st)
+    if which_bt():
+        run_bt(["discoverable", "off"])
+        run_bt(["pairable", "off"])
+    out({"ok": True, "message": "Pairing window closed. The adapter is no longer discoverable."})
+
+
+def cmd_confirm(dry=False):
+    if dry:
+        out({"ok": True, "dry_run": True, "message": "Would trust the pending device only after this confirm."})
+    st = load_state()
+    if not st.get("active") or time.time() >= st.get("expires", 0):
+        out({"error": "No pairing window is open."}, 1)
+    mac = st.get("pending_mac")
+    if not mac:
+        out({"error": "No phone is waiting for confirmation yet. Keep this PC discoverable and retry from the phone."}, 1)
+    if dry:
+        out({"ok": True, "dry_run": True, "commands": [["bluetoothctl", "trust", mac]]})
+    r = run_bt(["trust", mac])
+    if r["returncode"] != 0:
+        out({"error": "Could not trust the device. Try again or cancel and re-pair."}, 1)
+    st["confirmed"] = True
+    st["active"] = False
+    st.pop("passkey", None)
+    save_state(st)
+    run_bt(["discoverable", "off"])
+    run_bt(["pairable", "off"])
+    out({"ok": True, "message": f"Trusted {mac}. It can now act as a keyboard and mouse. The PC is no longer discoverable."})
+
+
+def cmd_start(timeout=TIMEOUT, dry=False):
+    timeout = int(timeout)
+    if not 15 <= timeout <= 300:
+        out({"error": "Timeout must be 15-300 seconds."}, 1)
+    planned = [
+        ["systemctl", "start", "bluetooth"],  # start now; do not enable on boot
+        ["bluetoothctl", "power", "on"],
+        ["bluetoothctl", "pairable", "on"],
+        ["bluetoothctl", "discoverable", "on"],
+        ["bluetoothctl", "discoverable-timeout", str(timeout)],
+    ]
+    if dry:
+        out({"ok": True, "dry_run": True, "timeout": timeout, "commands": planned,
+             "message": "Would make the adapter discoverable and pairable, then wait for a passkey confirmation."})
+    if shutil.which("systemctl"):
+        systemctl(["start", "bluetooth"])
+        # Never: systemctl enable bluetooth
+    if not which_bt():
+        out({"error": "bluetoothctl is not installed. Install bluez and bluez-utils (Arch) or bluez (Debian)."}, 1)
+    for args in (["power", "on"], ["pairable", "on"], ["discoverable-timeout", str(timeout)], ["discoverable", "on"]):
+        run_bt(args)
+    expires = int(time.time()) + timeout
+    save_state({"active": True, "expires": expires, "started": int(time.time()),
+                "pending_mac": None, "pending_name": None, "passkey": None, "confirmed": False})
+    out({
+        "ok": True, "expires": expires, "timeout": timeout,
+        "message": f"This PC is discoverable and pairable for {timeout} seconds. Confirm the passkey on this screen before the phone is trusted.",
+        "watch": "victor-bt-pair status",
+    })
+
+
+def _agent_watch(timeout):
+    """Optional foreground watcher: parse bluetoothctl output for passkey + MAC.
+
+    Invoked by `victor-bt-pair watch`. Control Center can poll `status` instead.
+    Trust still happens only in `confirm`.
+    """
+    if not which_bt():
+        out({"error": "bluetoothctl is not installed."}, 1)
+    proc = subprocess.Popen(
+        ["bluetoothctl", "--agent", "KeyboardDisplay"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+    )
+    try:
+        proc.stdin.write("default-agent\n")
+        proc.stdin.flush()
+    except OSError:
+        pass
+    end = time.time() + timeout
+    try:
+        while time.time() < end:
+            st = load_state()
+            if st.get("cancelled") or st.get("confirmed") or not st.get("active"):
+                break
+            line = ""
+            if proc.stdout:
+                # Non-blocking-ish read: rely on short waits via select
+                import select
+                r, _, _ = select.select([proc.stdout], [], [], 0.5)
+                if r:
+                    line = proc.stdout.readline()
+            if not line:
+                continue
+            # Do not echo raw lines that might include PINs to stderr unnecessarily.
+            m_key = re.search(r"Passkey|passkey|PIN|Confirm", line, re.I)
+            m_mac = re.search(r"(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", line)
+            m_pin = re.search(r"\b(\d{6})\b", line)
+            st = load_state()
+            if m_mac:
+                st["pending_mac"] = m_mac.group(1).upper()
+            if m_pin and m_key:
+                st["passkey"] = m_pin.group(1)
+            if m_mac or (m_pin and m_key):
+                save_state(st)
+        # Always leave the agent; never auto-trust.
+    finally:
+        try:
+            proc.send_signal(signal.SIGINT)
+            proc.terminate()
+        except OSError:
+            pass
+    out(load_state() or {"ok": True, "message": "Watch finished. Trust is only granted by 'victor-bt-pair confirm'."})
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="victor-bt-pair",
+        description="Pair a phone as a Bluetooth keyboard and mouse. Off by default. Trust only after you confirm.",
+    )
+    ap.add_argument("--dry-run", action="store_true", help="print planned commands; do not touch the adapter")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    st = sp.add_parser("start", help="power on, discoverable and pairable for 120 seconds")
+    st.add_argument("--timeout", type=int, default=TIMEOUT)
+    sp.add_parser("confirm", help="trust the pending phone after you have checked the passkey")
+    sp.add_parser("cancel", help="close the pairing window without trusting")
+    sp.add_parser("status")
+    sp.add_parser("list")
+    un = sp.add_parser("unpair")
+    un.add_argument("mac")
+    wt = sp.add_parser("watch", help="optional: follow bluetoothctl until passkey appears (still needs confirm)")
+    wt.add_argument("--timeout", type=int, default=TIMEOUT)
+    a = ap.parse_args()
+    if a.cmd == "start":
+        cmd_start(a.timeout, dry=a.dry_run)
+    elif a.cmd == "confirm":
+        cmd_confirm(dry=a.dry_run)
+    elif a.cmd == "cancel":
+        cmd_cancel(dry=a.dry_run)
+    elif a.cmd == "status":
+        cmd_status(dry=a.dry_run)
+    elif a.cmd == "list":
+        cmd_list(dry=a.dry_run)
+    elif a.cmd == "unpair":
+        cmd_unpair(a.mac, dry=a.dry_run)
+    elif a.cmd == "watch":
+        if a.dry_run:
+            out({"ok": True, "dry_run": True, "commands": [["bluetoothctl", "--agent", "KeyboardDisplay"]]})
+        _agent_watch(a.timeout)
+
+
+if __name__ == "__main__":
+    main()
