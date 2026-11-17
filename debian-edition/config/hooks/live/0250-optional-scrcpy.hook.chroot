@@ -1,0 +1,56 @@
+#!/bin/bash
+# Optional scrcpy install. scrcpy is not in Debian 13 (trixie) itself; it may
+# be in ${DEBIAN_SUITE}-backports. Never fail the image build if it is absent.
+# The backports source is used only during this hook and is removed afterwards
+# so the live image does not keep it. No runtime downloads.
+set -u
+
+log() { echo "optional-scrcpy: $*" >&2; }
+
+if command -v scrcpy >/dev/null 2>&1; then
+  log "already installed"
+  exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Returns 0 only if scrcpy is present after the attempt.
+try_install() {
+  apt-get install -y --no-install-recommends "$@" scrcpy
+}
+
+if try_install; then
+  log "installed from the configured suite"
+  exit 0
+fi
+
+log "not in the configured suite; trying backports for this package only"
+
+if [ -f /usr/share/victorlinux/versions.env ]; then
+  # shellcheck source=/dev/null
+  . /usr/share/victorlinux/versions.env
+fi
+mirror="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
+suite="${DEBIAN_SUITE:-trixie}"
+bpo="${suite}-backports"
+list=/etc/apt/sources.list.d/victor-scrcpy-backports.list
+
+cleanup() { rm -f "$list"; }
+trap cleanup EXIT
+
+printf 'deb %s %s main contrib non-free non-free-firmware\n' "$mirror" "$bpo" > "$list"
+
+if ! apt-get update \
+    -o Dir::Etc::sourcelist="$list" \
+    -o Dir::Etc::sourceparts=/dev/null \
+    -o APT::Get::List-Cleanup=0; then
+  log "could not fetch the backports index; leaving scrcpy out"
+  exit 0
+fi
+
+if try_install -t "$bpo"; then
+  log "installed from $bpo"
+else
+  log "scrcpy is not available; leaving it out so the image can still build"
+fi
+exit 0

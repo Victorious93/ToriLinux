@@ -7,7 +7,7 @@ commands, mounts only partitions that are ext4 + label VICTORDATA or TORIDATA, a
 import json, os, pwd, re, shutil, subprocess, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
-from victorlib import storage
+from victorlib import storage, diskhealth
 
 OWNER = "victor"
 UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
@@ -251,10 +251,18 @@ def cmd_access_apply():
             print("owner credentials restored from the data partition")
 
 
+def cmd_smart(dev):
+    """Read-only SMART health of one local disk (partition paths are mapped to their disk). Never writes."""
+    try:
+        print(json.dumps(diskhealth.collect_smart(dev)))
+    except ValueError as e:
+        die(str(e))
+
+
 VERBS = {"storage-mount": (cmd_mount, 1), "storage-auto": (cmd_auto, 0), "storage-session": (cmd_session, 0),
          "storage-check": (cmd_check, 0), "storage-repair": (cmd_repair, 0), "fw-sync": (cmd_fw_sync, 3),
          "set-password": (cmd_password, 0), "ssh-enable": (cmd_ssh_enable, 2), "revoke": (cmd_revoke, 0),
-         "reset-owner": (cmd_reset_owner, 0), "owner-status": (cmd_owner_status, 0), "access-apply": (cmd_access_apply, 0)}
+         "reset-owner": (cmd_reset_owner, 0), "owner-status": (cmd_owner_status, 0), "access-apply": (cmd_access_apply, 0), "smart": (cmd_smart, 1)}
 
 if __name__ == "__main__":
     if os.geteuid() != 0:

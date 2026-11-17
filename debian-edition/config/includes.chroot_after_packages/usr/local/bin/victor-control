@@ -6,8 +6,8 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 CTL = "/usr/local/bin/victor-ctl"
 
 
-def ctl(*args, timeout=600):
-    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout)
+def ctl(*args, timeout=600, stdin=None):
+    p = subprocess.run([CTL, *args], capture_output=True, text=True, timeout=timeout, input=stdin)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.strip() or p.stdout.strip() or f"exit {p.returncode}")
     try:
@@ -117,7 +117,7 @@ class App(tk.Tk):
             ttk.Label(card, textvariable=sub, style="TileSub.TLabel", wraplength=140).pack(anchor="w")
             self.tiles[key] = (v, sub)
         self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=18, pady=12)
-        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_diag()
+        self.tab_status(); self.tab_models(); self.tab_remote(); self.tab_kali(); self.tab_fleet(); self.tab_storage(); self.tab_docs(); self.tab_diag()
         self.after(500, self.refresh)
 
     # ---- helpers
@@ -247,6 +247,9 @@ class App(tk.Tk):
         ttk.Button(row, text="Select for inference", command=self.select_model).pack(side="left", padx=3)
         ttk.Button(row, text="Remove", command=self.remove_model).pack(side="left", padx=3)
         ttk.Button(row, text="Reload list", command=self.load_models).pack(side="left", padx=3)
+        ttk.Button(row, text="Check integrity (hash)", command=self.hash_model).pack(side="left", padx=3)
+        ttk.Button(row, text="Remember settings", command=lambda: self.bg(lambda: ctl("model", "remember", self._sel()),
+                                                                          lambda r: self.models_msg.set(f"remembered for this model: {r}"))).pack(side="left", padx=3)
         ttk.Label(f, text="Optional SHA-256 to verify:").pack(anchor="w"); self.sha = ttk.Entry(f); self.sha.pack(fill="x")
         s = ttk.LabelFrame(f, text="Inference settings", padding=6); s.pack(fill="x", pady=6)
         self.vars = {k: tk.StringVar() for k in ("backend", "ctx", "mem_limit_gb", "sleep_idle_minutes")}
@@ -268,6 +271,12 @@ class App(tk.Tk):
             for k in self.vars: self.vars[k].set(str(d["cfg"][k]))
             self.jinja.set(bool(d["cfg"]["jinja"])); self.models_msg.set(f"selected: {d['cfg']['model'] or '(none)'}")
         self.bg(lambda: {"models": ctl("model", "list"), "cfg": ctl("llama", "config")}, done)
+
+    def hash_model(self):
+        n = self._sel()
+        args = ["model", "hash", n] + (["--expected", self.sha.get().strip()] if self.sha.get().strip() else [])
+        self.bg(lambda: ctl(*args, timeout=7200), lambda r: self.models_msg.set(f"{n}: {r[n]['label']} {r[n].get('sha256', '')}"),
+                "hashing (reads the whole file)...")
 
     def _sel(self):
         i = self.model_list.curselection()
@@ -444,6 +453,9 @@ class App(tk.Tk):
         b = ttk.Frame(f); b.pack(fill="x")
         for t, fn in (("Rescan", self.scan), ("Use selected partition", self.use_sel), ("Temporary session (RAM only)", self.session)):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
+        b2 = ttk.Frame(f); b2.pack(fill="x", pady=4)
+        for t, fn in (("Storage health", self.health), ("Back up now...", self.backup), ("Restore...", self.restore)):
+            ttk.Button(b2, text=t, command=fn).pack(side="left", padx=2)
         self.stor_out = self.mkout(f); self.after(1200, self.scan)
 
     def scan(self):
@@ -453,6 +465,42 @@ class App(tk.Tk):
                 self.cand.insert("end", f"UUID {c['uuid']}  {c['size']/2**30:.1f} GiB  {c['model']} {c['serial']} ({c['transport']})")
             self.out(self.stor_out, f"{s['state']}: {s['message']}")
         self.bg(lambda: ctl("storage", "status"), done)
+
+    def health(self):
+        def show(r):
+            lines = [f"Overall: {r['status']}"]
+            lines += [f"{s['label']}: {s['pct_free']}% free ({s['free'] / 2**30:.1f} GiB) {s['fix']}" for s in r["space"]]
+            for d in r["smart"]:
+                lines += [f"{d['device']} {d.get('model', '')}: SMART {d['status']}"] + [f"  - {x['text']} {x['fix']}" for x in d["findings"]]
+            self.out(self.stor_out, "\n".join(lines))
+        self.bg(lambda: ctl("storage", "health", timeout=180), show, "checking drives...")
+
+    def _ask_pass(self, title, confirm=False):
+        from tkinter import simpledialog
+        p = simpledialog.askstring(title, "Backup passphrase (10+ characters):", show="*", parent=self)
+        if not p:
+            return None
+        if confirm and simpledialog.askstring(title, "Repeat the passphrase:", show="*", parent=self) != p:
+            messagebox.showerror(title, "The passphrases do not match."); return None
+        return p
+
+    def backup(self):
+        p = self._ask_pass("Encrypted backup", confirm=True)
+        if not p: return
+        sec = messagebox.askyesno("Encrypted backup", "Also include the API key and TLS keys? (No is safer.)", default="no")
+        args = ["backup", "create"] + (["--include-secrets"] if sec else [])
+        self.bg(lambda: ctl(*args, stdin=p + "\n", timeout=600), lambda r: self.out(self.stor_out, f"Encrypted backup saved: {r['path']} ({r['files']} files)"), "encrypting...")
+
+    def restore(self):
+        f = filedialog.askopenfilename(title="Choose a VictorLinux backup", filetypes=[("VictorLinux backup", "*.vlbak")])
+        if not f: return
+        p = self._ask_pass("Restore backup")
+        if not p: return
+        def checked(r):
+            self.out(self.stor_out, f"Verified backup from {r['created']}:\n" + "\n".join(x["path"] for x in r["files"]))
+            if messagebox.askyesno("Restore backup", f"Verified {len(r['files'])} files. Replace your current settings and chats? Current files are copied to a pre-restore folder first.", default="no"):
+                self.bg(lambda: ctl("backup", "restore", f, "--yes", stdin=p + "\n"), lambda x: self.out(self.stor_out, f"Restored {x['restored']} files. Previous copies: {x['previous_dir']}"), "restoring...")
+        self.bg(lambda: ctl("backup", "inspect", f, stdin=p + "\n"), checked, "verifying...")
 
     def use_sel(self):
         i = self.cand.curselection()
@@ -464,12 +512,46 @@ class App(tk.Tk):
             self.bg(lambda: ctl("storage", "session"), lambda r: self.scan())
 
     # ---- Diagnostics
+    def tab_docs(self):
+        """Ask your documents: only folders the owner adds; local index; answers from the local model only."""
+        f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Documents")
+        q = ttk.Frame(f); q.pack(fill="x")
+        ttk.Label(q, text="Question:").pack(side="left")
+        self.doc_q = ttk.Entry(q); self.doc_q.pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(q, text="Ask", style="Accent.TButton", command=lambda: self.doc_run("ask")).pack(side="left", padx=2)
+        ttk.Button(q, text="Search only", command=lambda: self.doc_run("search")).pack(side="left", padx=2)
+        b = ttk.Frame(f); b.pack(fill="x", pady=4)
+        ttk.Button(b, text="Add folder...", command=self.doc_add).pack(side="left", padx=2)
+        ttk.Button(b, text="Index now", command=lambda: self.bg(lambda: ctl("docs", "index", timeout=3600), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)), "indexing...")).pack(side="left", padx=2)
+        ttk.Button(b, text="Folders", command=lambda: self.bg(lambda: ctl("docs", "list"), lambda r: self.out(self.doc_out, json.dumps(r, indent=2)))).pack(side="left", padx=2)
+        self.doc_out = self.mkout(f)
+
+    def doc_add(self):
+        d = filedialog.askdirectory(title="Folder to index (only folders you choose are read)")
+        if d:
+            self.bg(lambda: ctl("docs", "add", d), lambda r: self.out(self.doc_out, f"Added {r['added']}. Press Index now."))
+
+    def doc_run(self, cmd):
+        q = self.doc_q.get().strip()
+        if not q:
+            return
+        def show(r):
+            parts = [r.get("answer") or r.get("message") or ""]
+            parts += [f"[{i + 1}] {h['path']}\n{h['text']}" for i, h in enumerate(r.get("hits", []))]
+            self.out(self.doc_out, "\n\n".join(p for p in parts if p) or "Nothing matches. Add a folder and index it.")
+        self.bg(lambda: ctl("docs", cmd, q, timeout=900), show, "thinking on this PC...")
+
     def tab_diag(self):
         f = ttk.Frame(self.nb, padding=8); self.nb.add(f, text="Diagnostics")
         b = ttk.Frame(f); b.pack(fill="x")
-        for t, fn in (("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
+        for t, fn in (("Check this PC", self.pc_check), ("Collect diagnostics", self.diag), ("Copy to clipboard", self.copy), ("Run benchmark", self.benchmark), ("Versions", self.versions), ("Suggest models for this PC", self.recommend), ("Save log snapshot", lambda: self.bg(lambda: ctl("diag", "save-log"), lambda r: self.out(self.diag_out, r)))):
             ttk.Button(b, text=t, command=fn).pack(side="left", padx=2)
         self.diag_out = self.mkout(f)
+
+    def pc_check(self):
+        self.bg(lambda: ctl("diag", "check", timeout=180),
+                lambda r: self.out(self.diag_out, r["text"] + (f"\n\nSaved: {r['saved']['report']}" if (r.get("saved") or {}).get("report") else "")),
+                "checking this PC...")
 
     def diag(self):
         self.bg(lambda: ctl("diag", "show", timeout=180), lambda r: self.out(self.diag_out, json.dumps(r, indent=2)), "collecting...")

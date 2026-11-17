@@ -19,3 +19,7 @@ airootfs/root/customize_airootfs/scripts/9999-cleanup.sh
 packages.x86_64
 pacman.conf
 profiledef.sh
+
+# never commit vendored wheels/sdists at the repository root
+/*.whl
+/*.tar.gz
