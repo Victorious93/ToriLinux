@@ -74,7 +74,7 @@ scripts/build.sh amd gui          # out/victorlinux-*.iso + checksum, manifest, 
 scripts/build.sh universal gui    # alias of cuda: adds the NVIDIA stack (supported generations follow that driver)
 ```
 
-Debian edition: see [debian-edition/README.md](debian-edition/README.md).
+Debian edition: see [debian-edition/README.md](debian-edition/README.md). Raspberry Pi edition (arm64, Pi 5/4 and Zero 2 W headless; never booted): see [docs/raspberry-pi.md](docs/raspberry-pi.md).
 
 ## Choose an edition
 
@@ -182,7 +182,7 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 
 [Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
 [Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
-[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
+[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md) · [Raspberry Pi edition](docs/raspberry-pi.md)
 [Fleet integration plan](docs/FLEET_INTEGRATION_PLAN.md) · [Clients](docs/clients.md)
 
 ## Status and testing
