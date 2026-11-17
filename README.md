@@ -166,6 +166,7 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 [Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
 [Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
 [Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
+[Fleet integration plan](docs/FLEET_INTEGRATION_PLAN.md) · [Clients](docs/clients.md)
 
 ## Status and testing
 
