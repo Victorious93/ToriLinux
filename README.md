@@ -29,6 +29,7 @@ renamed Victorious fork of [sasha0552/ToriLinux](https://github.com/sasha0552/To
 | **Control Center** | Local web UI (dark, rounded, responsive) plus CLI: `victor-open`, `victor-storage`, `victor-hardware`, `victor-diag` |
 | **Optional API** | Authenticated OpenAI-compatible endpoint for DroidCommand-AI, VictorSuite, [Victorious Browser](https://github.com/Victorious93/victorious-browser); the admin UI never leaves `127.0.0.1` |
 | **Fleet** | Coordinate 3–4 phones ([fleet integration](docs/fleet-integration.md)) |
+| **Phone mirroring** | Optional `victor-phone` (scrcpy) to mirror and control a USB-connected Android phone, with audio and recording. The image still builds if scrcpy is missing ([notes](docs/phone-mirroring.md)) |
 
 ## Choose an edition
 
@@ -157,7 +158,7 @@ Import a model with `victor-model-import FILE.gguf` (or `--to-storage` for a cho
 
 [Storage](docs/storage.md) · [Boot media / USB](docs/usb.md) · [Build](docs/build.md) · [Hardware & models](docs/hardware-and-models.md) · [AMD GPU](docs/amd-gpu.md) · [Remote access](docs/remote-access.md) ·
 [Security](docs/security.md) · [Maintenance](docs/maintenance.md) · [Fleet integration](docs/fleet-integration.md) · [Companion API](docs/companion-api.md) · [Flash companion changes](docs/flash-companion-changes.md) ·
-[Debian edition](debian-edition/README.md)
+[Phone mirroring](docs/phone-mirroring.md) · [Debian edition](debian-edition/README.md)
 
 ## Status and testing
 
@@ -191,4 +192,4 @@ Some build metadata still names the former repository URL; this repository is [V
 
 Original ToriLinux © [sasha0552](https://github.com/sasha0552), MIT. VictorLinux modifications © **Victorious / Victorious Framework**, same license unless a file states otherwise ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 Runtime and build components keep their own licenses: [llama.cpp](https://github.com/ggml-org/llama.cpp), [Arch Linux](https://archlinux.org/), [Debian](https://www.debian.org/),
-[Ventoy](https://github.com/ventoy/Ventoy) (GPLv3, used unmodified as a separate tool), and the optional ComfyUI, SD.Next, InvokeAI, SillyTavern, vLLM and nvidia-pstated packs.
+[Ventoy](https://github.com/ventoy/Ventoy) (GPLv3, used unmodified as a separate tool), [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0), and the optional ComfyUI, SD.Next, InvokeAI, SillyTavern, vLLM and nvidia-pstated packs.

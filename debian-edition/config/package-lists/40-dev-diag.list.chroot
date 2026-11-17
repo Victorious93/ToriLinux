@@ -4,6 +4,10 @@ gcc
 make
 adb
 fastboot
+# udev rules for adb (group plugdev / adbusers). Required for non-root access.
+android-sdk-platform-tools-common
+# scrcpy is not in Debian 13 (trixie). Hook 0250-optional-scrcpy.hook.chroot
+# tries to install it (suite, then backports) and skips if it is unavailable.
 nmap
 wireshark
 tcpdump
