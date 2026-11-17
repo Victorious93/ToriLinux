@@ -1,6 +1,10 @@
 [Configuration]
-ColorForeground=#d8dee9
-ColorBackground=#1b1e26
-ColorCursor=#d8dee9
-ColorPalette=#3b4252;#bf616a;#a3be8c;#ebcb8b;#81a1c1;#b48ead;#88c0d0;#e5e9f0;#4c566a;#bf616a;#a3be8c;#ebcb8b;#81a1c1;#b48ead;#8fbcbb;#eceff4
+ColorForeground=#e8eef9
+ColorBackground=#0b0f1a
+ColorCursor=#00e5ff
+ColorSelection=#00e5ff
+ColorSelectionUseDefault=FALSE
+ColorBold=#00e5ff
+ColorBoldUseDefault=FALSE
+ColorPalette=#1d2740;#ff6b88;#3ee6a8;#ffc857;#5b8cff;#ff2bd6;#00e5ff;#e8eef9;#5a6a8f;#ff8fa6;#7af0c4;#ffd98a;#8fb0ff;#ff70e4;#6af0ff;#f5f8ff
 FontName=Monospace 10
