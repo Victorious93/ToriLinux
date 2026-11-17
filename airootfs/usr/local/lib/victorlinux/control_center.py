@@ -26,6 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import victorcommon as tc  # noqa: E402
 import model_advisor  # noqa: E402
 import hostplan  # noqa: E402
+import diskhealth  # noqa: E402
+import vbackup  # noqa: E402
 import docchat  # noqa: E402
 import pccheck  # noqa: E402
 import modellib  # noqa: E402
@@ -88,10 +90,11 @@ class App:
         self.gw = Proc("gateway")
         self.svc = {k: Proc(k) for k in SERVICES}
         self.import_job = {"state": "idle"}
+        self.health_cache = {"t": 0.0, "r": None}
+
+
         self.emb = Proc("embed")
         self.doc_job = docchat.IndexJob()
-
-
         self.hash_job = None
         self.llm_info = {}
         self.token = pysecrets.token_urlsafe(32)
@@ -186,6 +189,80 @@ class App:
             s["upstream_key"] = pysecrets.token_urlsafe(32)
             tc.save_secrets(s)
         return s["upstream_key"]
+
+    # ---------------------------------------------------- storage health --
+    def storage_health(self, refresh=False):
+        """Free space on every place VictorLinux writes, plus read-only SMART for the disks behind them (cached 10 min)."""
+        if not refresh and self.health_cache["r"] and time.time() - self.health_cache["t"] < 600:
+            return self.health_cache["r"]
+        root = tc.data_root()
+        paths = [("VictorLinux data", root)] if root else []
+        paths += [("Models folder", d) for d in tc.load_settings().get("extra_model_dirs", [])]
+        space = diskhealth.free_space(paths)
+        disks = []
+        for item in space:
+            r = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "--target", item["path"]], capture_output=True, text=True, timeout=10)
+            disk = diskhealth.disk_of(r.stdout.strip().split("[")[0]) if r.returncode == 0 else None
+            item["disk"] = disk
+            if disk and disk not in disks:
+                disks.append(disk)
+        smart = []
+        for d in disks:
+            j = self.priv_json(["smart", d])
+            smart.append(diskhealth.parse_smart(j) if "error" not in j else
+                         {"device": d, "model": "", "status": "unknown", "findings": [{"level": "unknown", "text": "SMART check unavailable: " + j["error"][:160],
+                                                                                    "fix": "Run victor-priv smart as root or install smartmontools."}]})
+        rep = diskhealth.report(space, smart)
+        rep["checked"] = tc.now()
+        if not root:
+            rep["note"] = "No storage selected yet: choose a drive in Storage to check its space and health."
+        self.health_cache = {"t": time.time(), "r": rep}
+        return rep
+
+    # ----------------------------------------------------------- backups --
+    BACKUP_ITEMS = ["config", "chats", "docs/config.json", "reports"]
+    BACKUP_SECRETS = ["config/secrets.json", "server"]
+
+    def backup_dir(self):
+        return tc.data_path("backups")
+
+    def backup_file(self, b):
+        """A backup in the backups folder (by name) or a .vlbak file elsewhere (e.g. a USB stick)."""
+        name, path = b.get("name"), b.get("path")
+        if isinstance(name, str) and vbackup.NAME_RE.match(name):
+            return os.path.join(self.backup_dir(), name)
+        if isinstance(path, str) and path.endswith(vbackup.SUFFIX):
+            p = os.path.realpath(os.path.expanduser(path))
+            if os.path.isfile(p) and os.path.getsize(p) < 3 * 1024 ** 3:
+                return p
+        raise vbackup.BackupError("Choose a backup from the list, or enter the full path of a .vlbak file.")
+
+    def backups_action(self, b):
+        root = tc.data_root()
+        if not root:
+            return 400, {"error": "Choose storage first."}
+        act = b.get("action")
+        allowed = self.BACKUP_ITEMS + self.BACKUP_SECRETS
+        try:
+            if act == "create":
+                if b.get("passphrase") != b.get("confirm_passphrase"):
+                    return 400, {"error": "The two passphrases do not match."}
+                r = vbackup.create(root, self.backup_dir(), b.get("passphrase"), self.BACKUP_ITEMS, self.BACKUP_SECRETS,
+                                   include_secrets=b.get("include_secrets") is True)
+                r["message"] = f"Encrypted backup saved: {os.path.basename(r['path'])} ({r['files']} files" + \
+                               (", includes API keys and TLS keys)" if r["includes_secrets"] else ", no secrets)")
+                return 200, r
+            if act == "inspect":
+                return 200, vbackup.inspect(self.backup_file(b), b.get("passphrase") or "", allowed)
+            if act == "restore":
+                r = vbackup.restore(self.backup_file(b), b.get("passphrase") or "", root, allowed, self.backup_dir(), confirm=b.get("confirm") is True)
+                r["message"] = f"Restored {r['restored']} files." + (f" Previous versions saved in {r['previous_dir']}." if r["previous_dir"] else "") + \
+                               " Restart the model to use restored settings."
+                return 200, r
+        except vbackup.BackupError as e:
+            return 400, {"error": str(e)}
+        return 400, {"error": "unknown backup action"}
+
 
     # ------------------------------------------------------------- docs --
     def doc_index(self):
@@ -860,6 +937,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 st = APP.fleet(["status"])
                 st["plans"] = APP.fleet(["plans"]) if st.get("running") else []
                 return self._send(200, st)
+            if u.path == "/api/health":
+                return self._send(200, APP.storage_health(q.get("refresh", ["0"])[0] == "1"))
+            if u.path == "/api/backups":
+                d = APP.backup_dir()
+                return self._send(200, {"backups": vbackup.list_backups(d) if d else [], "dir": d,
+                                        "gpg": bool(shutil.which("gpg")), "items": APP.BACKUP_ITEMS, "secret_items": APP.BACKUP_SECRETS})
+
+
             if u.path == "/api/docs":
                 r = APP.docs_status()
                 return self._send(400 if "error" in r else 200, r)
@@ -922,6 +1007,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(400, {"error": "Model must be inside a configured model directory."})
                 tc.save_settings(s)
                 return self._send(200, {"ok": True})
+            if p == "/api/backups":
+                return self._send(*APP.backups_action(b))
+
+
             if p == "/api/docs":
                 return self._send(*APP.docs_action(b))
 

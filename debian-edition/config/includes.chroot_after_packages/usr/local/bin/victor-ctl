@@ -4,6 +4,7 @@ import argparse, json, os, sys
 sys.path.insert(0, "/usr/local/lib/victorlinux")
 from victorlib.common import *
 from victorlib import hw, storage, models, llama, api, bench, kali, diag, pccheck, modellib, docchat
+from victorlib import diskhealth, vbackup
 
 PRIV = ["sudo", "-n", "/usr/local/lib/victorlinux/victor-priv"]
 
@@ -20,6 +21,60 @@ def out(a, obj):
         print(json.dumps(obj, indent=2, default=str))
     else:
         print(obj)
+
+
+BACKUP_ITEMS = ["settings", "chat"]
+BACKUP_SECRETS = ["secrets"]
+
+
+def storage_health():
+    space = diskhealth.free_space([("VictorLinux data", root_dir())])
+    smart, disks = [], []
+    for item in space:
+        r = run(["findmnt", "-n", "-o", "SOURCE", "--target", item["path"]])
+        item["disk"] = diskhealth.disk_of(r.stdout.strip().split("[")[0]) if r.returncode == 0 else None
+        if item["disk"] and item["disk"] not in disks:
+            disks.append(item["disk"])
+    for d in disks:
+        try:
+            smart.append(diskhealth.parse_smart(json.loads(priv("smart", d))))
+        except (VictorError, ValueError) as e:
+            smart.append({"device": d, "model": "", "status": "unknown", "findings": [{"level": "unknown", "text": f"SMART check unavailable: {e}", "fix": ""}]})
+    return diskhealth.report(space, smart)
+
+
+def _passphrase(a, confirm=False):
+    """Read from stdin (one line) - never from argv, so it cannot leak through ps or shell history."""
+    if sys.stdin.isatty():
+        import getpass
+        p = getpass.getpass("Backup passphrase: ")
+        if confirm and getpass.getpass("Repeat passphrase: ") != p:
+            raise VictorError("The passphrases do not match.")
+        return p
+    return sys.stdin.readline().rstrip("\n")
+
+
+def _backup_file(ref):
+    if vbackup.NAME_RE.match(os.path.basename(ref)) and os.sep not in ref:
+        return os.path.join(data_path("backups"), ref)
+    p = os.path.realpath(os.path.expanduser(ref))
+    if not p.endswith(vbackup.SUFFIX) or not os.path.isfile(p):
+        raise VictorError("Give a backup name from 'victor-ctl backup list' or the path of a .vlbak file.")
+    return p
+
+
+def backup_cmd(a):
+    allowed = BACKUP_ITEMS + BACKUP_SECRETS
+    try:
+        if a.cmd == "list":
+            return vbackup.list_backups(data_path("backups"))
+        if a.cmd == "create":
+            return vbackup.create(root_dir(), data_path("backups"), _passphrase(a, True), BACKUP_ITEMS, BACKUP_SECRETS, include_secrets=a.include_secrets)
+        if a.cmd == "inspect":
+            return vbackup.inspect(_backup_file(a.backup), _passphrase(a), allowed)
+        return vbackup.restore(_backup_file(a.backup), _passphrase(a), root_dir(), allowed, data_path("backups"), confirm=a.yes)
+    except vbackup.BackupError as e:
+        raise VictorError(str(e))
 
 
 def _doc_index():
@@ -176,7 +231,11 @@ def main():
         for n in subs:
             r[n] = s.add_parser(n)
         return r
-    st = g("storage", "status", "list", "select", "session", "check", "repair", "init")
+    st = g("storage", "status", "list", "select", "session", "check", "repair", "init", "health")
+    bk = g("backup", "list", "create", "inspect", "restore")
+    bk["create"].add_argument("--include-secrets", action="store_true", help="also back up the API key and TLS keys")
+    bk["inspect"].add_argument("backup"); bk["restore"].add_argument("backup")
+    bk["restore"].add_argument("--yes", action="store_true", help="confirm: replace current settings and chats (previous copies are kept)")
     st["select"].add_argument("uuid")
     hwp = g("hw", "snapshot", "backend", "recommend")
     mo = g("model", "list", "import", "inspect", "select", "remove", "library", "hash", "remember", "accept")
@@ -211,6 +270,8 @@ def main():
                 out(a, priv("storage-session"))
             elif a.cmd in ("check", "repair"):
                 out(a, priv("storage-" + a.cmd))
+            elif a.cmd == "health":
+                out(a, storage_health())
             elif a.cmd == "init":
                 storage.ensure_layout(root_dir()); out(a, "layout ready")
         elif a.grp == "hw":
@@ -274,6 +335,8 @@ def main():
                 out(a, pc_check(not a.no_save))
             else:
                 out(a, diag.collect() if a.cmd == "show" else diag.save_log_snapshot())
+        elif a.grp == "backup":
+            out(a, backup_cmd(a))
         elif a.grp == "docs":
             out(a, docs_cmd(a))
         elif a.grp == "versions":
