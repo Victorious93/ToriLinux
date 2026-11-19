@@ -190,11 +190,15 @@ class JobStore:
     def _run(self, job):
         # Every transition is followed by its disk write BEFORE the lock is released, so a
         # caller that observes the terminal state in memory (e.g. a status poll racing this
-        # thread) never sees a state the disk copy has not caught up to yet, and a crash
-        # between "the job finished" and "the job was saved" cannot happen.
+        # thread) never sees a state the disk copy has not caught up to yet. The write
+        # itself is attempted outside the exception handling that decides the job's
+        # OUTCOME: a storage failure while saving a result the tool already produced must
+        # never be reinterpreted as the tool having failed, and must never attempt a second,
+        # illegal transition out of an already-terminal state (secprotocol.TRANSITIONS has
+        # no transition out of a terminal state, by design - see that module's own comment).
         with job.lock:
             _transition(job, "running")
-            self._save(job)
+        self._save_best_effort(job)
         try:
             result = self._run_executor(job)
             with job.lock:
@@ -202,16 +206,24 @@ class JobStore:
                     _transition(job, "cancelled", result=result)
                 else:
                     _transition(job, "completed", result=result)
-                self._save(job)
         except proto.ProtocolError as e:
             with job.lock:
                 target = "cancelled" if (job.state == "cancelling" and e.code == "cancelled") else "failed"
                 _transition(job, target, error=e.to_dict()["error"])
-                self._save(job)
         except Exception as e:  # noqa: BLE001 - last line of defense; never leaves a job stuck "running"
             with job.lock:
                 _transition(job, "failed", error={"code": "internal", "message": str(e)})
-                self._save(job)
+        self._save_best_effort(job)
+
+    def _save_best_effort(self, job):
+        """The in-memory job (source of truth for every live API response) is already
+        correct by the time this is called; a failure persisting it to disk is recorded in
+        a log line, never re-raised into a job-outcome decision."""
+        try:
+            self._save(job)
+        except proto.ProtocolError as e:
+            import sys
+            sys.stderr.write(f"[secjobs] could not persist job {job.job_id} (state={job.state}): {e.message}\n")
 
     def get(self, owner_key_id, job_id):
         with self._lock:
