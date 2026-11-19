@@ -1,0 +1,12 @@
+#!/bin/sh
+# Start or operate the VictorLinux security-tool execution backend (SET / Metasploit) as
+# the current, unprivileged user - same pattern as victor-control-center. Opt-in: nothing
+# starts this at boot.
+#
+#   victor-secbackend create-key "my phone"     # mint an API key, scoped to tool execution only
+#   victor-secbackend serve                      # start the backend (loopback:18099 by default)
+#   victor-secbackend serve --bind 0.0.0.0        # LAN/VPN - set up your own trust boundary first
+#
+# See docs/security-backend.md for the full CLI reference, including the local diagnostic
+# client subcommands (capabilities/submit/status/cancel) that talk to a running instance.
+exec python3 -I /usr/local/lib/victorlinux/secbackend.py "$@"

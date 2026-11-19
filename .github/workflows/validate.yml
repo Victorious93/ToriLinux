@@ -27,7 +27,8 @@ jobs:
       - name: Shell scripts
         run: |
           shellcheck -S warning scripts/*.sh airootfs/usr/local/bin/victor-open airootfs/usr/local/bin/victor-tls-cert \
-            airootfs/usr/local/bin/victor-bench airootfs/usr/local/bin/victor-phone airootfs/usr/local/lib/victorlinux/victor-boot-setup \
+            airootfs/usr/local/bin/victor-bench airootfs/usr/local/bin/victor-phone airootfs/usr/local/bin/victor-secbackend \
+            airootfs/usr/local/lib/victorlinux/victor-boot-setup \
             airootfs/root/customize_airootfs.sh airootfs/root/customize_airootfs/root-scripts/*.sh \
             airootfs/root/customize_airootfs/scripts/*.sh profiledef.sh \
             debian-edition/config/includes.chroot_after_packages/usr/local/bin/victor-phone \
