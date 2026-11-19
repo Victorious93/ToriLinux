@@ -19,7 +19,7 @@ RUN_DIR = os.environ.get("VICTOR_RUN_DIR", "/run/victor")
 PERSIST_STATE = os.path.join(RUN_DIR, "persist.json")
 TEMP_DATA = "/run/victor-temp-data"          # explicit temporary-session storage (RAM)
 LLAMA_ROOT = os.environ.get("VICTOR_LLAMA_ROOT", "/opt/llama.cpp")
-SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs", "server")
+SUBDIRS = ("models", "chats", "config", "images", "outputs", "documents", "logs", "server", "security")
 
 DEFAULT_SETTINGS = {
     "backend": "auto",            # auto | vulkan | hip | cuda | cpu
